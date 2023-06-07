@@ -3,13 +3,14 @@ use std::{
   time::{Duration, Instant},
 };
 
-use crate::types::{NodeId, Packet};
+use crate::types::{
+  DecodeError, DecodeU32Error, EncodeError, InvalidLabel, MessageType, NodeId, Packet,
+};
 
 use bytes::{BufMut, Bytes, BytesMut};
 
 const LABEL_MAX_SIZE: usize = 255;
 const DEFAULT_BUFFER_SIZE: usize = 4096;
-
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u8)]
@@ -79,7 +80,9 @@ impl core::fmt::Display for ConnectionError {
     write!(
       f,
       "{} connection {} error {}",
-      self.kind.as_str(), self.error_kind.as_str(), self.error
+      self.kind.as_str(),
+      self.error_kind.as_str(),
+      self.error
     )
   }
 }
@@ -91,10 +94,13 @@ impl std::error::Error for ConnectionError {
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum TransportError<T: Transport>
-{
+pub enum TransportError<T: Transport> {
   #[error("{0}")]
   Connection(#[from] ConnectionError),
+  #[error("{0}")]
+  Encode(#[from] EncodeError),
+  #[error("{0}")]
+  Decode(#[from] DecodeError),
   #[error("{0}")]
   Other(T::Error),
 }
@@ -108,104 +114,129 @@ mod r#async {
 
   use super::*;
   use async_channel::Receiver;
-  use futures_util::io::{AsyncReadExt, AsyncWriteExt, BufReader, AsyncBufReadExt};
-  use trust_dns_proto::{tcp::{DnsTcpStream, Connect}, udp::UdpSocket};
+  use futures_util::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+  use trust_dns_proto::{
+    tcp::{Connect, DnsTcpStream},
+    udp::UdpSocket,
+  };
 
   macro_rules! connection_bail {
-    (impl $($trait:ident)&+ $(&)? => $ident:ident<$kind:ident>) => {
-      pub struct $ident<C>(BufReader<C>);
+    (impl $ass:ident => $ident:ident<$kind:ident>) => {
+      pub struct $ident<T: Transport>(BufReader<T::$ass>);
 
-      impl<C> From<C> for $ident<C>
+      impl<T> $ident<T>
       where
-        C: $($trait +)*,
+        T: Transport,
       {
         #[inline]
-        fn from(c: C) -> $ident<C> {
-          $ident(BufReader::new(c))
-        }
-      }
-
-      impl<C> $ident<C>
-      where
-        C: $($trait +)*,
-      {
-        #[inline]
-        pub fn new(conn: C) -> Self {
+        pub fn new(conn: T::$ass) -> Self {
           Self(BufReader::with_capacity(DEFAULT_BUFFER_SIZE, conn))
         }
 
         #[inline]
-        pub fn with_capacity(capacity: usize, conn: C) -> Self {
+        pub(crate) async fn read_u32_varint(&mut self) -> Result<usize, TransportError<T>> {
+          let mut n = 0;
+          let mut shift = 0;
+          for i in 0..5 {
+            let mut byte = [0; 1];
+            self.read_exact(&mut byte).await?;
+            let b = byte[0];
+
+            if b < 0x80 {
+              return Ok((n | ((b as u32) << shift)) as usize);
+            }
+
+            n |= ((b & 0x7f) as u32) << shift;
+            shift += 7;
+          }
+
+          Err(TransportError::Decode(DecodeError::Length(DecodeU32Error)))
+        }
+
+        #[inline]
+        pub fn with_capacity(capacity: usize, conn: T::$ass) -> Self {
           Self(BufReader::with_capacity(capacity, conn))
         }
 
         #[inline]
-        pub async fn read(&mut self, buf: &mut [u8]) -> Result<usize, ConnectionError> {
-          self.0.read(buf).await.map_err(|e| ConnectionError {
-            kind: ConnectionKind::$kind,
-            error_kind: ConnectionErrorKind::Read,
-            error: e,
+        pub async fn read(&mut self, buf: &mut [u8]) -> Result<usize, TransportError<T>> {
+          self.0.read(buf).await.map_err(|e| {
+            TransportError::Connection(ConnectionError {
+              kind: ConnectionKind::$kind,
+              error_kind: ConnectionErrorKind::Read,
+              error: e,
+            })
           })
         }
 
         #[inline]
-        pub async fn read_exact(&mut self, buf: &mut [u8]) -> Result<(), ConnectionError> {
-          self.0.read_exact(buf).await.map_err(|e| ConnectionError {
-            kind: ConnectionKind::$kind,
-            error_kind: ConnectionErrorKind::Read,
-            error: e,
+        pub async fn read_exact(&mut self, buf: &mut [u8]) -> Result<(), TransportError<T>> {
+          self.0.read_exact(buf).await.map_err(|e| {
+            TransportError::Connection(ConnectionError {
+              kind: ConnectionKind::$kind,
+              error_kind: ConnectionErrorKind::Read,
+              error: e,
+            })
           })
         }
 
         #[inline]
-        pub async fn write(&mut self, buf: &[u8]) -> Result<usize, ConnectionError> {
-          self.0.write(buf).await.map_err(|e| ConnectionError {
-            kind: ConnectionKind::$kind,
-            error_kind: ConnectionErrorKind::Write,
-            error: e,
+        pub async fn write(&mut self, buf: &[u8]) -> Result<usize, TransportError<T>> {
+          self.0.write(buf).await.map_err(|e| {
+            TransportError::Connection(ConnectionError {
+              kind: ConnectionKind::$kind,
+              error_kind: ConnectionErrorKind::Write,
+              error: e,
+            })
           })
         }
 
         #[inline]
-        pub async fn write_all(&mut self, buf: &[u8]) -> Result<(), ConnectionError> {
-          self.0.write_all(buf).await.map_err(|e| ConnectionError {
-            kind: ConnectionKind::$kind,
-            error_kind: ConnectionErrorKind::Write,
-            error: e,
+        pub async fn write_all(&mut self, buf: &[u8]) -> Result<(), TransportError<T>> {
+          self.0.write_all(buf).await.map_err(|e| {
+            TransportError::Connection(ConnectionError {
+              kind: ConnectionKind::$kind,
+              error_kind: ConnectionErrorKind::Write,
+              error: e,
+            })
           })
         }
 
         #[inline]
-        pub async fn flush(&mut self) -> Result<(), ConnectionError> {
-          self.0.flush().await.map_err(|e| ConnectionError {
-            kind: ConnectionKind::$kind,
-            error_kind: ConnectionErrorKind::Flush,
-            error: e,
+        pub async fn flush(&mut self) -> Result<(), TransportError<T>> {
+          self.0.flush().await.map_err(|e| {
+            TransportError::Connection(ConnectionError {
+              kind: ConnectionKind::$kind,
+              error_kind: ConnectionErrorKind::Flush,
+              error: e,
+            })
           })
         }
 
         #[inline]
-        pub async fn close(&mut self) -> Result<(), ConnectionError> {
-          self.0.close().await.map_err(|e| ConnectionError {
-            kind: ConnectionKind::$kind,
-            error_kind: ConnectionErrorKind::Write,
-            error: e,
+        pub async fn close(&mut self) -> Result<(), TransportError<T>> {
+          self.0.close().await.map_err(|e| {
+            TransportError::Connection(ConnectionError {
+              kind: ConnectionKind::$kind,
+              error_kind: ConnectionErrorKind::Write,
+              error: e,
+            })
           })
         }
 
         #[inline]
         pub fn set_timeout(&mut self, timeout: Option<Duration>) {
-          self.0.set_timeout(timeout)
+          self.0.get_mut().set_timeout(timeout)
         }
 
         #[inline]
         pub fn timeout(&self) -> Option<Duration> {
-          self.0.timeout()
+          self.0.get_ref().timeout()
         }
 
         #[inline]
         pub fn remote_node(&self) -> &NodeId {
-          self.0.remote_node()
+          self.0.get_ref().remote_node()
         }
 
         /// General approach is to prefix with the same structure:
@@ -213,40 +244,29 @@ mod r#async {
         /// magic type byte (244): `u8`
         /// length of label name:  `u8` (because labels can't be longer than 255 bytes)
         /// label name:            `Vec<u8>`
-        /// 
+        ///
         /// Write a label header.
-        pub async fn add_label_header(
-          &mut self,
-          label: &[u8],
-        ) -> Result<(), ConnectionError> {
+        pub async fn add_label_header(&mut self, label: &[u8]) -> Result<(), TransportError<T>> {
           if label.is_empty() {
             return Ok(());
           }
-      
+
           if label.len() > LABEL_MAX_SIZE {
-            return Err(ConnectionError {
-              kind: ConnectionKind::$kind,
-              error_kind: ConnectionErrorKind::Label,
-              error: std::io::Error::new(std::io::ErrorKind::Other, "label too large, the lable size range is [1-255] bytes"),
-            });
+            return Err(TransportError::Encode(EncodeError::InvalidLabel(
+              InvalidLabel::InvalidSize(label.len()),
+            )));
           }
 
           let mut bytes = BytesMut::with_capacity(label.len() + 2);
           bytes.put_u8(MessageType::HasLabel as u8);
           bytes.put_u8(label.len() as u8);
           bytes.put_slice(label);
-          w.write_all(&bytes).await.map_err(|e| ConnectionError {
-            kind: ConnectionKind::$kind,
-            error_kind: ConnectionErrorKind::Write,
-            error: e,
-          })
+          self.write_all(&bytes).await
         }
 
         /// Removes any label header from the beginning of
         /// the stream if present and returns it.
-        pub async fn remove_label_header(
-          &mut self,
-        ) -> Result<Bytes, ConnectionError> {
+        pub async fn remove_label_header(&mut self) -> Result<Bytes, TransportError<T>> {
           let buf = match self.0.fill_buf().await {
             Ok(buf) => {
               if buf.is_empty() {
@@ -255,56 +275,49 @@ mod r#async {
               buf
             }
             Err(e) => {
-              if e.kind() == std::io::ErrorKind::UnexpectedEof {
-                return Ok(Bytes::new());
+              return if e.kind() == std::io::ErrorKind::UnexpectedEof {
+                Ok(Bytes::new())
               } else {
-                return Err(ConnectionError {
+                Err(TransportError::Connection(ConnectionError {
                   kind: ConnectionKind::$kind,
                   error_kind: ConnectionErrorKind::Read,
                   error: e,
-                });
+                }))
               }
             }
           };
 
           // First check for the type byte.
-          if MessageType::try_from(buf[0])? != MessageType::HasLabel {
-            return Ok(Bytes::new());
+          match MessageType::try_from(buf[0]) {
+            Ok(MessageType::HasLabel) => {}
+            Ok(_) => return Ok(Bytes::new()),
+            Err(e) => return Err(TransportError::Decode(DecodeError::InvalidMessageType(e))),
           }
+
           if buf.len() < 2 {
-            return Err(ConnectionError {
-              kind: ConnectionKind::$kind,
-              error_kind: ConnectionErrorKind::Label,
-              error: std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "truncated label header"),
-            });
+            return Err(TransportError::Decode(DecodeError::Truncated("label")));
           }
           let label_size = buf[1] as usize;
           if label_size < 1 {
-            return Err(ConnectionError {
-              kind: ConnectionKind::$kind,
-              error_kind: ConnectionErrorKind::Label,
-              error: std::io::Error::new(std::io::ErrorKind::InvalidData, "invalid label size, label size cannot be empty"),
-            });
+            return Err(TransportError::Decode(DecodeError::InvalidLabel(
+              InvalidLabel::InvalidSize(0),
+            )));
           }
 
           if buf.len() < 2 + label_size {
-            return Err(ConnectionError {
-              kind: ConnectionKind::$kind,
-              error_kind: ConnectionErrorKind::Label,
-              error: std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "truncated label header"),
-            });
+            return Err(TransportError::Decode(DecodeError::Truncated("label")));
           }
 
           let label = Bytes::copy_from_slice(&buf[2..2 + label_size]);
-          r.consume_unpin(2 + label_size);
+          self.0.consume_unpin(2 + label_size);
           Ok(label)
         }
       }
     };
   }
 
-  connection_bail!(impl Connection & UdpSocket => UnreliableConnection<Unreliable>);
-  connection_bail!(impl Connection & DnsTcpStream & Connect => ReliableConnection<Reliable>);
+  connection_bail!(impl UnreliableConnection => UnreliableConnection<Unreliable>);
+  connection_bail!(impl Connection => ReliableConnection<Reliable>);
 
   /// Compressor is used to compress and decompress data from a transport connection.
   #[async_trait::async_trait]
@@ -361,7 +374,10 @@ mod r#async {
     /// Given the user's configured values (which
     /// might be empty) and returns the desired IP and port to advertise to
     /// the rest of the cluster.
-    fn final_advertise_addr(&self, addr: Option<SocketAddr>) -> Result<SocketAddr, TransportError<Self>>;
+    fn final_advertise_addr(
+      &self,
+      addr: Option<SocketAddr>,
+    ) -> Result<SocketAddr, TransportError<Self>>;
 
     /// A packet-oriented interface that fires off the given
     /// payload to the given address in a connectionless fashion. This should
@@ -384,26 +400,30 @@ mod r#async {
       &self,
       addr: SocketAddr,
       timeout: Duration,
-    ) -> Result<ReliableConnection<Self::Connection>, TransportError<Self>>;
+    ) -> Result<ReliableConnection<Self>, TransportError<Self>>;
 
     fn packet(&self) -> &Receiver<Packet>;
 
     /// Returns a receiver that can be read to handle incoming stream
     /// connections from other peers. How this is set up for listening is
     /// left as an exercise for the concrete transport implementations.
-    fn stream(&self) -> &Receiver<ReliableConnection<Self::Connection>>;
+    fn stream(&self) -> &Receiver<ReliableConnection<Self>>;
 
     /// Called when memberlist is shutting down; this gives the
     /// transport a chance to clean up any listeners.
     async fn shutdown(self) -> Result<(), TransportError<Self>>;
 
-    async fn write_to_address(&self, b: &[u8], addr: &NodeId) -> Result<Instant, TransportError<Self>>;
+    async fn write_to_address(
+      &self,
+      b: &[u8],
+      addr: &NodeId,
+    ) -> Result<Instant, TransportError<Self>>;
 
     async fn dial_address_timeout(
       &self,
       addr: &NodeId,
       timeout: Duration,
-    ) -> Result<ReliableConnection<Self::Connection>, TransportError<Self>>;
+    ) -> Result<ReliableConnection<Self>, TransportError<Self>>;
 
     /// Used to create a potentially unreliable connection, e.g. UDP, that allows us to perform
     /// two-way communication with a peer. This is generally less expensive
@@ -413,7 +433,7 @@ mod r#async {
       &self,
       addr: SocketAddr,
       timeout: Duration,
-    ) -> Result<UnreliableConnection<Self::UnreliableConnection>, TransportError<Self>>;
+    ) -> Result<UnreliableConnection<Self>, TransportError<Self>>;
 
     /// Used to create a potentially unreliable connection, e.g. UDP, that allows us to perform
     /// two-way communication with a peer using an Address object. This function can
@@ -422,17 +442,17 @@ mod r#async {
       &self,
       addr: &NodeId,
       timeout: Duration,
-    ) -> Result<UnreliableConnection<Self::UnreliableConnection>, TransportError<Self>>;
+    ) -> Result<UnreliableConnection<Self>, TransportError<Self>>;
 
     /// Connect to the address with reliable connection, e.g. TCP
-    /// 
+    ///
     /// **Note**: This function is only used in DNS lookup
     async fn connect(addr: SocketAddr) -> std::io::Result<Self::Connection> {
       <Self::Connection as trust_dns_proto::tcp::Connect>::connect(addr).await
     }
 
     /// Connect to the address with unreliable connection, e.g. UDP
-    /// 
+    ///
     /// **Note**: This function is only used in DNS lookup
     async fn bind_unreliable(addr: SocketAddr) -> std::io::Result<Self::UnreliableConnection> {
       <Self::UnreliableConnection as trust_dns_proto::udp::UdpSocket>::bind(addr).await

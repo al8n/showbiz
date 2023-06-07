@@ -3,21 +3,17 @@ use std::sync::atomic::Ordering;
 use crate::{
   delegate::Delegate,
   error::Error,
-  label::LabeledConnection,
   security::{append_bytes, encrypted_length, EncryptionAlgo, SecurityError},
   showbiz::Spawner,
-  transport::{Connection, TransportError},
-  types::{InvalidMessageType, MessageType},
-  util::{compress_payload, decompress_buffer, CompressionError},
+  transport::{ReliableConnection, TransportError},
+  types::MessageType,
+  util::{compress_payload, decompress_buffer},
   Options, SecretKeyring,
 };
 
 use super::*;
 use bytes::{Buf, BufMut, BytesMut};
-use futures_util::{
-  future::{BoxFuture, FutureExt},
-  io::{AsyncRead, AsyncReadExt, AsyncWriteExt, BufReader},
-};
+use futures_util::future::FutureExt;
 
 mod packet;
 mod stream;
@@ -54,7 +50,7 @@ impl<D: Delegate, T: Transport, S: Spawner> Showbiz<D, T, S> {
     }
 
     // Attempt to connect
-    let conn = self
+    let mut conn = self
       .inner
       .transport
       .dial_address_timeout(id, self.inner.opts.tcp_timeout)
@@ -68,24 +64,26 @@ impl<D: Delegate, T: Transport, S: Spawner> Showbiz<D, T, S> {
     }
 
     // Send our state
-    let mut lr = LabeledConnection::new(BufReader::new(conn));
-    lr.set_label(self.inner.opts.label.clone());
-
     let encryption_enabled = self.encryption_enabled().await;
     self
-      .send_local_state(&mut lr, id, encryption_enabled, join)
+      .send_local_state(
+        &mut conn,
+        id,
+        encryption_enabled,
+        join,
+        &self.inner.opts.label,
+      )
       .await?;
 
-    lr.conn
-      .get_mut()
-      .set_timeout(if self.inner.opts.tcp_timeout == Duration::ZERO {
-        None
-      } else {
-        Some(self.inner.opts.tcp_timeout)
-      });
+    conn.set_timeout(if self.inner.opts.tcp_timeout == Duration::ZERO {
+      None
+    } else {
+      Some(self.inner.opts.tcp_timeout)
+    });
 
     let (data, mt) = Self::read_stream(
-      &mut lr,
+      &mut conn,
+      &self.inner.opts.label,
       encryption_enabled,
       self.inner.keyring.as_ref(),
       &self.inner.opts,
@@ -99,11 +97,9 @@ impl<D: Delegate, T: Transport, S: Spawner> Showbiz<D, T, S> {
           Err(e) => return Err(NetworkError::Decode(e).into()),
         },
         None => {
-          let len = decode_u32_from_reader(&mut lr)
-            .await
-            .map(|(x, _)| x as usize)?;
+          let len = conn.read_u32_varint().await.map_err(Error::transport)?;
           let mut buf = vec![0; len];
-          lr.read_exact(&mut buf).await?;
+          conn.read_exact(&mut buf).await.map_err(Error::transport)?;
           ErrorResponse::decode_from(buf.into()).map_err(NetworkError::Decode)?
         }
       };
@@ -123,7 +119,7 @@ impl<D: Delegate, T: Transport, S: Spawner> Showbiz<D, T, S> {
 
     // Read remote state
     self
-      .read_remote_state(&mut lr, data, id)
+      .read_remote_state(&mut conn, data)
       .await
       .map_err(From::from)
   }
@@ -173,15 +169,16 @@ impl<D: Delegate, T: Transport, S: Spawner> Showbiz<D, T, S> {
     }
   }
 
-  async fn decrypt_remote_state<R: AsyncRead + std::marker::Unpin>(
-    r: &mut LabeledConnection<R>,
+  async fn decrypt_remote_state(
+    r: &mut ReliableConnection<T>,
+    stream_label: &[u8],
     keyring: &SecretKeyring,
   ) -> Result<Bytes, Error<D, T>> {
     let meta_size = core::mem::size_of::<u8>() + core::mem::size_of::<u32>();
     let mut buf = BytesMut::with_capacity(meta_size);
     buf.put_u8(MessageType::Encrypt as u8);
     let mut b = [0u8; core::mem::size_of::<u32>()];
-    r.read_exact(&mut b).await?;
+    r.read_exact(&mut b).await.map_err(Error::transport)?;
     buf.put_slice(&b);
 
     // Ensure we aren't asked to download too much. This is to guard against
@@ -203,7 +200,7 @@ impl<D: Delegate, T: Transport, S: Spawner> Showbiz<D, T, S> {
 
     // Read in the rest of the payload
     buf.resize(meta_size + more_bytes, 0);
-    r.read_exact(&mut buf).await?;
+    r.read_exact(&mut buf).await.map_err(Error::transport)?;
 
     // Decrypt the cipherText with some authenticated data
     //
@@ -212,7 +209,7 @@ impl<D: Delegate, T: Transport, S: Spawner> Showbiz<D, T, S> {
     //   [messageType; byte] [messageLength; uint32] [label_data; optional]
     //
     let mut ciphertext = buf.split_off(meta_size);
-    if r.label().is_empty() {
+    if stream_label.is_empty() {
       // Decrypt the payload
       keyring
         .decrypt_payload(&mut ciphertext, &buf)
@@ -223,7 +220,7 @@ impl<D: Delegate, T: Transport, S: Spawner> Showbiz<D, T, S> {
         })
         .map_err(From::from)
     } else {
-      let data_bytes = append_bytes(&buf, r.label());
+      let data_bytes = append_bytes(&buf, stream_label);
       // Decrypt the payload
       keyring
         .decrypt_payload(&mut ciphertext, data_bytes.as_ref())

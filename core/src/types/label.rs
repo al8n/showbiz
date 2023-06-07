@@ -1,0 +1,252 @@
+use super::DecodeError;
+use bytes::{Buf, BufMut, Bytes, BytesMut};
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, thiserror::Error)]
+pub enum InvalidLabel {
+  #[error("the size of label must between [0-255] bytes, got {0}")]
+  InvalidSize(usize),
+  #[error("{0}")]
+  Utf8(#[from] core::str::Utf8Error),
+}
+
+#[derive(Clone)]
+pub struct Label(Bytes);
+
+impl Label {
+  /// The maximum size of a name in bytes.
+  pub const MAX_SIZE: usize = u8::MAX as usize;
+
+  #[inline]
+  pub const fn from_static(s: &'static str) -> Self {
+    Self(Bytes::from_static(s.as_bytes()))
+  }
+
+  #[inline]
+  pub fn is_empty(&self) -> bool {
+    self.0.is_empty()
+  }
+
+  #[inline]
+  pub fn len(&self) -> usize {
+    self.0.len()
+  }
+
+  #[inline]
+  pub(crate) fn from_bytes(s: Bytes) -> Result<Self, InvalidLabel> {
+    if s.len() > Self::MAX_SIZE || s.len() < 1 {
+      return Err(InvalidLabel::InvalidSize(s.len()));
+    }
+    match core::str::from_utf8(&s) {
+      Ok(_) => Ok(Self(s)),
+      Err(e) => Err(e.into()),
+    }
+  }
+
+  #[inline]
+  pub(crate) fn from_slice(s: &[u8]) -> Result<Self, InvalidLabel> {
+    if s.len() > Self::MAX_SIZE || s.len() < 1 {
+      return Err(InvalidLabel::InvalidSize(s.len()));
+    }
+    match core::str::from_utf8(s) {
+      Ok(s) => Ok(Self(Bytes::copy_from_slice(s.as_bytes()))),
+      Err(e) => Err(e.into()),
+    }
+  }
+
+  #[inline]
+  pub(crate) fn from_array<const N: usize>(s: [u8; N]) -> Result<Self, InvalidLabel> {
+    if s.len() > Self::MAX_SIZE || s.len() < 1 {
+      return Err(InvalidLabel::InvalidSize(s.len()));
+    }
+    match core::str::from_utf8(&s) {
+      Ok(_) => Ok(Self(Bytes::copy_from_slice(&s))),
+      Err(e) => Err(e.into()),
+    }
+  }
+
+  #[inline]
+  pub(crate) fn encoded_len(&self) -> usize {
+    core::mem::size_of::<u8>() + self.0.len()
+  }
+
+  #[inline]
+  pub(crate) fn encode_to(&self, buf: &mut BytesMut) {
+    buf.put_u8(self.0.len() as u8);
+    buf.put(self.0.as_ref());
+  }
+
+  #[inline]
+  pub(crate) fn decode_len(mut buf: impl Buf) -> Result<usize, DecodeError> {
+    if buf.remaining() < core::mem::size_of::<u8>() {
+      return Err(DecodeError::Truncated("label"));
+    }
+    Ok(buf.get_u8() as usize)
+  }
+
+  #[inline]
+  pub(crate) fn decode_from(buf: Bytes) -> Result<Self, DecodeError> {
+    if buf.remaining() == 0 {
+      return Err(DecodeError::Truncated("label"));
+    }
+    match core::str::from_utf8(buf.as_ref()) {
+      Ok(_) => Ok(Self(buf)),
+      Err(e) => Err(DecodeError::InvalidLabel(InvalidLabel::Utf8(e))),
+    }
+  }
+}
+
+impl Serialize for Label {
+  fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+    if serializer.is_human_readable() {
+      serializer.serialize_str(self.as_str())
+    } else {
+      serializer.serialize_bytes(self.as_bytes())
+    }
+  }
+}
+
+impl<'de> Deserialize<'de> for Label {
+  fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+  where
+    D: serde::Deserializer<'de>,
+  {
+    if deserializer.is_human_readable() {
+      String::deserialize(deserializer)
+        .and_then(|n| Label::try_from(n).map_err(|e| serde::de::Error::custom(e)))
+    } else {
+      Bytes::deserialize(deserializer)
+        .and_then(|n| Label::try_from(n).map_err(|e| serde::de::Error::custom(e)))
+    }
+  }
+}
+
+impl AsRef<str> for Label {
+  fn as_ref(&self) -> &str {
+    self.as_str()
+  }
+}
+
+impl core::cmp::PartialOrd for Label {
+  fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
+    self.as_str().partial_cmp(other.as_str())
+  }
+}
+
+impl core::cmp::Ord for Label {
+  fn cmp(&self, other: &Self) -> core::cmp::Ordering {
+    self.as_str().cmp(other.as_str())
+  }
+}
+
+impl core::cmp::PartialEq for Label {
+  fn eq(&self, other: &Self) -> bool {
+    self.as_str() == other.as_str()
+  }
+}
+
+impl core::cmp::PartialEq<str> for Label {
+  fn eq(&self, other: &str) -> bool {
+    self.as_str() == other
+  }
+}
+
+impl core::cmp::PartialEq<&str> for Label {
+  fn eq(&self, other: &&str) -> bool {
+    self.as_str() == *other
+  }
+}
+
+impl core::cmp::PartialEq<String> for Label {
+  fn eq(&self, other: &String) -> bool {
+    self.as_str() == other
+  }
+}
+
+impl core::cmp::PartialEq<&String> for Label {
+  fn eq(&self, other: &&String) -> bool {
+    self.as_str() == *other
+  }
+}
+
+impl core::cmp::Eq for Label {}
+
+impl core::hash::Hash for Label {
+  fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+    self.as_str().hash(state)
+  }
+}
+
+impl Label {
+  #[inline]
+  pub fn as_bytes(&self) -> &[u8] {
+    &self.0
+  }
+
+  #[inline]
+  pub fn as_str(&self) -> &str {
+    core::str::from_utf8(&self.0).unwrap()
+  }
+}
+
+impl TryFrom<&str> for Label {
+  type Error = InvalidLabel;
+
+  fn try_from(s: &str) -> Result<Self, Self::Error> {
+    if s.len() > Self::MAX_SIZE || s.len() < 1 {
+      return Err(InvalidLabel::InvalidSize(s.len()));
+    }
+    Ok(Self(Bytes::copy_from_slice(s.as_bytes())))
+  }
+}
+
+impl TryFrom<String> for Label {
+  type Error = InvalidLabel;
+
+  fn try_from(s: String) -> Result<Self, Self::Error> {
+    if s.len() > Self::MAX_SIZE || s.len() < 1 {
+      return Err(InvalidLabel::InvalidSize(s.len()));
+    }
+    Ok(Self(s.into()))
+  }
+}
+
+impl TryFrom<Bytes> for Label {
+  type Error = InvalidLabel;
+
+  fn try_from(s: Bytes) -> Result<Self, Self::Error> {
+    if s.len() > Self::MAX_SIZE || s.len() < 1 {
+      return Err(InvalidLabel::InvalidSize(s.len()));
+    }
+    match core::str::from_utf8(s.as_ref()) {
+      Ok(_) => Ok(Self(s)),
+      Err(e) => Err(InvalidLabel::Utf8(e)),
+    }
+  }
+}
+
+impl TryFrom<&Bytes> for Label {
+  type Error = InvalidLabel;
+
+  fn try_from(s: &Bytes) -> Result<Self, Self::Error> {
+    if s.len() > Self::MAX_SIZE || s.len() < 1 {
+      return Err(InvalidLabel::InvalidSize(s.len()));
+    }
+    match core::str::from_utf8(s.as_ref()) {
+      Ok(_) => Ok(Self(s.clone())),
+      Err(e) => Err(InvalidLabel::Utf8(e)),
+    }
+  }
+}
+
+impl core::fmt::Debug for Label {
+  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    write!(f, "{}", self.as_str())
+  }
+}
+
+impl core::fmt::Display for Label {
+  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    write!(f, "{}", self.as_str())
+  }
+}

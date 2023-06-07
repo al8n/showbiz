@@ -125,7 +125,7 @@ pub struct DecodeU32Error;
 
 impl core::fmt::Display for DecodeU32Error {
   fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-    write!(f, "invalid u32")
+    write!(f, "invalid length")
   }
 }
 
@@ -207,6 +207,9 @@ pub(crate) use ping::*;
 mod push_pull_state;
 pub(crate) use push_pull_state::*;
 
+mod label;
+pub use label::*;
+
 #[derive(Debug, thiserror::Error)]
 pub enum DecodeError {
   #[error("truncated {0}")]
@@ -215,6 +218,8 @@ pub enum DecodeError {
   Corrupted,
   #[error("checksum mismatch")]
   ChecksumMismatch,
+  #[error("fail to decode length {0}")]
+  Length(DecodeU32Error),
   #[error("unknown mark bit {0}")]
   UnknownMarkBit(u8),
   #[error("invalid ip addr length {0}")]
@@ -233,6 +238,8 @@ pub enum DecodeError {
   InvalidMessageType(#[from] InvalidMessageType),
   #[error("{0}")]
   InvalidCompressionAlgo(#[from] InvalidCompressionAlgo),
+  #[error("{0}")]
+  InvalidLabel(#[from] InvalidLabel),
   #[error("failed to read full push node state ({0} / {1})")]
   FailReadRemoteState(usize, usize),
   #[error("failed to read full user state ({0} / {1})")]
@@ -245,6 +252,12 @@ impl DecodeError {
   pub(crate) fn other(s: impl core::fmt::Display) -> Self {
     Self::Other(format!("{s}"))
   }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum EncodeError {
+  #[error("{0}")]
+  InvalidLabel(#[from] InvalidLabel),
 }
 
 #[viewit::viewit]

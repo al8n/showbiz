@@ -1,14 +1,12 @@
-use std::ops::Deref;
-
-use crate::types::{Node, NodeId};
-use futures_util::io::BufReader;
+use crate::{
+  transport::ReliableConnection,
+  types::{Node, NodeId},
+};
 
 use super::*;
 
 #[test]
-fn test() {
-
-}
+fn test() {}
 
 impl<D, T, S> Showbiz<D, T, S>
 where
@@ -44,8 +42,8 @@ where
   }
 
   /// Handles a single incoming stream connection from the transport.
-  async fn handle_conn(self, mut conn: T::Connection) {
-    let addr = <T::Connection as Connection>::remote_node(&conn).clone();
+  async fn handle_conn(self, mut conn: ReliableConnection<T>) {
+    let addr = conn.remote_node().clone();
     tracing::debug!(target = "showbiz", remote_node = %addr, "stream connection");
 
     #[cfg(feature = "metrics")]
@@ -54,11 +52,11 @@ where
     }
 
     if self.inner.opts.tcp_timeout != Duration::ZERO {
-      <T::Connection as Connection>::set_timeout(&mut conn, Some(self.inner.opts.tcp_timeout));
+      conn.set_timeout(Some(self.inner.opts.tcp_timeout));
     }
 
-    let mut lr = match Self::remove_label_header_from_stream(conn).await {
-      Ok(lr) => lr,
+    let mut stream_label = match conn.remove_label_header().await {
+      Ok(label) => label,
       Err(e) => {
         tracing::error!(target = "showbiz", err = %e, remote_node = ?addr, "failed to remove label header");
         return;
@@ -66,15 +64,15 @@ where
     };
 
     if self.inner.opts.skip_inbound_label_check {
-      if !lr.label().is_empty() {
+      if !stream_label.is_empty() {
         tracing::error!(target = "showbiz", remote_node = ?addr, "unexpected double stream label header");
         return;
       }
       // Set this from config so that the auth data assertions work below
-      lr.set_label(self.inner.opts.label.clone());
+      stream_label = self.inner.opts.label.clone();
     }
 
-    if self.inner.opts.label.ne(lr.label()) {
+    if self.inner.opts.label.ne(&stream_label) {
       tracing::error!(target = "showbiz", remote_node = ?addr, "discarding stream with unacceptable label: {:?}", self.inner.opts.label.as_ref());
       return;
     }
@@ -86,7 +84,8 @@ where
     };
 
     let (data, mt) = match Self::read_stream(
-      &mut lr,
+      &mut conn,
+      &stream_label,
       encryption_enabled,
       self.inner.keyring.as_ref(),
       &self.inner.opts,
@@ -106,7 +105,13 @@ where
           err_resp.encode_to(&mut out);
 
           if let Err(e) = self
-            .raw_send_msg_stream(&mut lr, out.freeze(), &addr, encryption_enabled)
+            .raw_send_msg_stream(
+              &mut conn,
+              &stream_label,
+              out.freeze(),
+              &addr,
+              encryption_enabled,
+            )
             .await
           {
             tracing::error!(target = "showbiz", err=%e, remote_node = ?addr, "failed to send error response");
@@ -145,10 +150,10 @@ where
             }
           }
         } else {
-          match decode_u32_from_reader(&mut lr).await {
-            Ok((len, _)) => {
+          match conn.read_u32_varint().await {
+            Ok(len) => {
               let mut buf = vec![0; len as usize];
-              match lr.read_exact(&mut buf).await {
+              match conn.read_exact(&mut buf).await {
                 Ok(_) => match Ping::decode_from(buf.into()) {
                   Ok(ping) => ping,
                   Err(e) => {
@@ -182,13 +187,19 @@ where
         ack.encode_to::<T::Checksumer>(&mut out);
 
         if let Err(e) = self
-          .raw_send_msg_stream(&mut lr, out.freeze(), &addr, encryption_enabled)
+          .raw_send_msg_stream(
+            &mut conn,
+            &stream_label,
+            out.freeze(),
+            &addr,
+            encryption_enabled,
+          )
           .await
         {
           tracing::error!(target = "showbiz", err=%e, remote_node = %addr, "failed to send ack response");
         }
       }
-      MessageType::User => self.read_user_msg(lr, data, &addr).await,
+      MessageType::User => self.read_user_msg(conn, data, &addr).await,
       MessageType::PushPull => {
         // Increment counter of pending push/pulls
         let num_concurrent = self.inner.hot.push_pull_req.fetch_add(1, Ordering::SeqCst);
@@ -202,7 +213,7 @@ where
           return;
         }
 
-        let node_state = match self.read_remote_state(&mut lr, data, &addr).await {
+        let node_state = match self.read_remote_state(&mut conn, data).await {
           Ok(ns) => ns,
           Err(e) => {
             tracing::error!(target = "showbiz", err=%e, remote_node = ?addr, "failed to read remote state");
@@ -211,7 +222,13 @@ where
         };
 
         if let Err(e) = self
-          .send_local_state(&mut lr, &addr, encryption_enabled, node_state.join)
+          .send_local_state(
+            &mut conn,
+            &addr,
+            encryption_enabled,
+            node_state.join,
+            &stream_label,
+          )
           .await
         {
           tracing::error!(target = "showbiz", err=%e, remote_node = ?addr, "failed to push local state");
@@ -231,9 +248,8 @@ where
   /// Used to read the remote state from a connection
   pub(super) async fn read_remote_state(
     &self,
-    lr: &mut LabeledConnection<T::Connection>,
+    conn: &mut ReliableConnection<T>,
     data: Option<Bytes>,
-    addr: &NodeId,
   ) -> Result<RemoteNodeState, Error<D, T>> {
     // Read the push/pull header
     let (header, mut data) = match data {
@@ -253,9 +269,9 @@ where
         (h, data)
       }
       None => {
-        let (total_len, _) = decode_u32_from_reader(lr).await?;
-        let mut buf = vec![0; total_len as usize];
-        lr.read_exact(&mut buf).await?;
+        let total_len = conn.read_u32_varint().await.map_err(Error::transport)?;
+        let mut buf = vec![0; total_len];
+        conn.read_exact(&mut buf).await.map_err(Error::transport)?;
         let mut buf: Bytes = buf.into();
         let len = PushPullHeader::decode_len(&mut buf).map_err(NetworkError::Decode)? as usize;
 
@@ -313,15 +329,14 @@ where
 
   pub(super) async fn send_local_state(
     &self,
-    lr: &mut LabeledConnection<T::Connection>,
+    conn: &mut ReliableConnection<T>,
     addr: &NodeId,
     encryption_enabled: bool,
     join: bool,
+    stream_label: &[u8],
   ) -> Result<(), Error<D, T>> {
     // Setup a deadline
-    lr.conn
-      .get_mut()
-      .set_timeout(Some(self.inner.opts.tcp_timeout));
+    conn.set_timeout(Some(self.inner.opts.tcp_timeout));
 
     // Prepare the local node state
     let mut states_encoded_size = 0;
@@ -427,7 +442,7 @@ where
     }
 
     self
-      .raw_send_msg_stream(lr, buf, addr, encryption_enabled)
+      .raw_send_msg_stream(conn, stream_label, buf, addr, encryption_enabled)
       .await
   }
 
@@ -476,7 +491,7 @@ where
 
   async fn read_user_msg(
     &self,
-    mut lr: LabeledConnection<T::Connection>,
+    mut conn: ReliableConnection<T>,
     data: Option<Bytes>,
     addr: &NodeId,
   ) {
@@ -501,14 +516,14 @@ where
       }
       None => {
         let mut user_msg_len = [0u8; 4];
-        if let Err(e) = lr.read_exact(&mut user_msg_len).await {
+        if let Err(e) = conn.read_exact(&mut user_msg_len).await {
           tracing::error!(target = "showbiz", err=%e, remote_node = ?addr, "failed to receive user message");
           return;
         }
         let user_msg_len = u32::from_be_bytes(user_msg_len) as usize;
         if user_msg_len > 0 {
           let mut user_msg = vec![0; user_msg_len];
-          if let Err(e) = lr.read_exact(&mut user_msg).await {
+          if let Err(e) = conn.read_exact(&mut user_msg).await {
             tracing::error!(target = "showbiz", err=%e, remote_node = ?addr, "failed to receive user message");
             return;
           }
@@ -530,23 +545,28 @@ where
     if addr.name().is_empty() && self.inner.opts.require_node_names {
       return Err(Error::MissingNodeName);
     }
-    let conn = self
+    let mut conn = self
       .inner
       .transport
       .dial_address_timeout(addr, self.inner.opts.tcp_timeout)
       .await
       .map_err(Error::transport)?;
 
-    let mut lr = LabeledConnection::new(BufReader::new(conn));
-    lr.set_label(self.inner.opts.label.clone());
     self
-      .raw_send_msg_stream(&mut lr, msg.freeze(), addr, self.encryption_enabled().await)
+      .raw_send_msg_stream(
+        &mut conn,
+        &self.inner.opts.label,
+        msg.freeze(),
+        addr,
+        self.encryption_enabled().await,
+      )
       .await
   }
 
   async fn raw_send_msg_stream(
     &self,
-    lr: &mut LabeledConnection<T::Connection>,
+    conn: &mut ReliableConnection<T>,
+    label: &[u8],
     mut buf: Bytes,
     addr: &NodeId,
     encryption_enabled: bool,
@@ -567,7 +587,7 @@ where
       match Self::encrypt_local_state(
         self.inner.keyring.as_ref().unwrap(),
         &buf,
-        lr.label(),
+        label,
         self.inner.opts.encryption_algo,
       )
       .await
@@ -579,7 +599,7 @@ where
             incr_tcp_sent_counter(crypt.len() as u64, self.inner.metrics_labels.iter());
           }
 
-          lr.conn.write_all(&crypt).await.map_err(From::from)
+          conn.write_all(&crypt).await.map_err(Error::transport)
         }
         Err(e) => {
           tracing::error!(target = "showbiz", err=%e, remote_node = ?addr, "failed to encrypt local state");
@@ -593,10 +613,7 @@ where
         incr_tcp_sent_counter(buf.len() as u64, self.inner.metrics_labels.iter());
       }
 
-      lr.conn
-        .write_all(&buf)
-        .await
-        .map_err(|e| Error::transport(T::Error::from(e)))
+      conn.write_all(&buf).await.map_err(Error::transport)
     }
   }
 
@@ -605,15 +622,16 @@ where
   ///
   /// The provided streamLabel if present will be authenticated during decryption
   /// of each message.
-  pub(super) async fn read_stream<R: AsyncRead + Unpin>(
-    lr: &mut LabeledConnection<R>,
+  pub(super) async fn read_stream(
+    conn: &mut ReliableConnection<T>,
+    label: &[u8],
     encryption_enabled: bool,
     keyring: Option<&SecretKeyring>,
     opts: &Options,
   ) -> Result<(Option<Bytes>, MessageType), Error<D, T>> {
     // Read the message type
     let mut buf = [0u8; 1];
-    let mut mt = match lr.read(&mut buf).await {
+    let mut mt = match conn.read(&mut buf).await {
       Ok(n) => {
         if n == 0 {
           return Err(
@@ -627,13 +645,13 @@ where
         match MessageType::try_from(buf[0]) {
           Ok(mt) => mt,
           Err(e) => {
-            return Err(NetworkError::Decode(DecodeError::from(e)).into());
+            return Err(Error::transport(TransportError::Decode(DecodeError::from(
+              e,
+            ))));
           }
         }
       }
-      Err(e) => {
-        return Err(NetworkError::IO(e).into());
-      }
+      Err(e) => return Err(Error::transport(e)),
     };
 
     // Check if the message is encrypted
@@ -646,7 +664,7 @@ where
         return Err(SecurityError::NotConfigured.into());
       };
 
-      let mut plain = match Self::decrypt_remote_state(lr, keyring).await {
+      let mut plain = match Self::decrypt_remote_state(conn, label, keyring).await {
         Ok(plain) => plain,
         Err(_e) => return Err(NetworkError::Decrypt.into()),
       };
@@ -667,13 +685,14 @@ where
 
     if mt == MessageType::Compress {
       let compressed = if let Some(mut unencrypted) = unencrypted {
-        let size = Compress::decode_len(&mut unencrypted).map_err(NetworkError::Decode)?;
+        let size = Compress::decode_len(&mut unencrypted)
+          .map_err(|e| Error::transport(TransportError::Decode(e)))?;
         unencrypted.split_to(size as usize)
       } else {
-        let compressed_size = decode_u32_from_reader(lr).await?.0 as usize;
+        let compressed_size = conn.read_u32_varint().await.map_err(Error::transport)?;
         let mut buf = vec![0; compressed_size];
-        if let Err(e) = lr.read_exact(&mut buf).await {
-          return Err(e.into());
+        if let Err(e) = conn.read_exact(&mut buf).await {
+          return Err(Error::transport(e));
         }
         buf.into()
       };
@@ -681,7 +700,7 @@ where
       let compress = match Compress::decode_from::<T::Checksumer>(compressed) {
         Ok(compress) => compress,
         Err(e) => {
-          return Err(NetworkError::Decode(e).into());
+          return Err(Error::transport(TransportError::Decode(e)));
         }
       };
       let mut uncompressed_data = if compress.algo.is_none() {
@@ -696,16 +715,18 @@ where
       };
 
       if !uncompressed_data.has_remaining() {
-        return Err(
-          NetworkError::Decode(DecodeError::Truncated(MessageType::Compress.as_err_str())).into(),
-        );
+        return Err(Error::transport(TransportError::Decode(
+          DecodeError::Truncated(MessageType::Compress.as_err_str()),
+        )));
       }
 
       // Reset the message type
       mt = match MessageType::try_from(uncompressed_data.get_u8()) {
         Ok(mt) => mt,
         Err(e) => {
-          return Err(NetworkError::Decode(DecodeError::from(e)).into());
+          return Err(Error::transport(TransportError::Decode(DecodeError::from(
+            e,
+          ))));
         }
       };
 
