@@ -68,6 +68,7 @@ impl ConnectionErrorKind {
   }
 }
 
+#[viewit::viewit(vis_all = "pub(crate)")]
 #[derive(Debug)]
 pub struct ConnectionError {
   kind: ConnectionKind,
@@ -93,7 +94,22 @@ impl std::error::Error for ConnectionError {
   }
 }
 
-#[derive(Debug, thiserror::Error)]
+impl ConnectionError {
+  fn failed_remote(&self) -> bool {
+    match self.kind {
+      ConnectionKind::Reliable => match self.error_kind {
+        ConnectionErrorKind::Read | ConnectionErrorKind::Write | ConnectionErrorKind::Dial => true,
+        _ => false,
+      },
+      ConnectionKind::Unreliable => match self.error_kind {
+        ConnectionErrorKind::Write => true,
+        _ => false,
+      },
+    }
+  }
+}
+
+#[derive(thiserror::Error)]
 pub enum TransportError<T: Transport> {
   #[error("{0}")]
   Connection(#[from] ConnectionError),
@@ -103,6 +119,22 @@ pub enum TransportError<T: Transport> {
   Decode(#[from] DecodeError),
   #[error("{0}")]
   Other(T::Error),
+}
+
+impl<T: Transport> core::fmt::Debug for TransportError<T> {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    write!(f, "{self}")
+  }
+}
+
+impl<T: Transport> TransportError<T> {
+  pub(crate) fn failed_remote(&self) -> bool {
+    if let Self::Connection(e) = self {
+      e.failed_remote()
+    } else {
+      false
+    }
+  }
 }
 
 #[cfg(feature = "async")]

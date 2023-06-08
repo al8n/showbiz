@@ -7,7 +7,7 @@ use crate::{
   util::InvalidAddress,
 };
 
-#[derive(Debug, thiserror::Error)]
+#[derive(thiserror::Error)]
 pub enum Error<D: Delegate, T: Transport> {
   #[error("showbiz: empty node name provided")]
   EmptyNodeName,
@@ -40,7 +40,7 @@ pub enum Error<D: Delegate, T: Transport> {
   #[error("showbiz: {0}")]
   Delegate(D::Error),
   #[error("showbiz: {0}")]
-  Transport(TransportError<T>),
+  Transport(#[from] TransportError<T>),
   #[error("showbiz: timeout waiting for leave broadcast")]
   LeaveTimeout,
   #[error("showbiz: {0}")]
@@ -52,6 +52,12 @@ pub enum Error<D: Delegate, T: Transport> {
   Network(#[from] NetworkError<T>),
   #[error("showbiz: no response from node {0}")]
   NoPingResponse(NodeId),
+}
+
+impl<D: Delegate, T: Transport> core::fmt::Debug for Error<D, T> {
+  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    write!(f, "{self}")
+  }
 }
 
 impl<D: Delegate, T: Transport> Error<D, T> {
@@ -68,6 +74,14 @@ impl<D: Delegate, T: Transport> Error<D, T> {
   #[inline]
   pub fn dns(e: trust_dns_resolver::error::ResolveError) -> Self {
     Self::DNS(e)
+  }
+
+  #[inline]
+  pub(crate) fn failed_remote(&self) -> bool {
+    match self {
+      Self::Transport(e) => e.failed_remote(),
+      _ => false,
+    }
   }
 }
 

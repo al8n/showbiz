@@ -6,6 +6,7 @@ use crate::{
   showbiz::{AckHandler, Member, Memberlist, Spawner},
   suspicion::Suspicion,
   timer::Timer,
+  transport::TransportError,
   types::{Alive, Dead, Message, MessageType, Name, Ping, Suspect},
 };
 
@@ -96,7 +97,13 @@ where
 
     let (ack_tx, ack_rx) = async_channel::bounded(self.inner.opts.indirect_checks + 1);
     self
-      .set_probe_channels(ping.seq_no, ack_tx, None, self.inner.opts.probe_interval)
+      .set_probe_channels(
+        ping.seq_no,
+        ack_tx,
+        None,
+        Instant::now(),
+        self.inner.opts.probe_interval,
+      )
       .await;
 
     // Send a ping to the node.
@@ -480,6 +487,149 @@ where
     scopeguard::defer! {
       observe_probe_node(now.elapsed().as_millis() as f64, self.inner.metrics_labels.iter());
     }
+
+    // We use our health awareness to scale the overall probe interval, so we
+    // slow down if we detect problems. The ticker that calls us can handle
+    // us running over the base interval, and will skip missed ticks.
+    let probe_interval = self
+      .inner
+      .awareness
+      .scale_timeout(self.inner.opts.probe_interval)
+      .await;
+
+    #[cfg(feature = "metrics")]
+    {
+      if probe_interval > self.inner.opts.probe_interval {
+        incr_degraded_probe(self.inner.metrics_labels.iter())
+      }
+    }
+
+    // Prepare a ping message and setup an ack handler.
+    let addr = self.get_advertise().await;
+    let ping = Ping {
+      seq_no: self.next_seq_no(),
+      source: NodeId {
+        name: self.inner.opts.name.clone(),
+        port: Some(addr.port()),
+        addr: addr.ip().into(),
+      },
+      target: Some(node.id().clone()),
+    };
+
+    let (ack_tx, ack_rx) = async_channel::bounded(1);
+    let (nack_tx, nack_rx) = async_channel::bounded(1);
+
+    // Mark the sent time here, which should be after any pre-processing but
+    // before system calls to do the actual send. This probably over-reports
+    // a bit, but it's the best we can do. We had originally put this right
+    // after the I/O, but that would sometimes give negative RTT measurements
+    // which was not desirable.
+    let sent = Instant::now();
+    // Send a ping to the node. If this node looks like it's suspect or dead,
+    // also tack on a suspect message so that it has a chance to refute as
+    // soon as possible.
+    let deadline = sent + probe_interval;
+
+    self
+      .set_probe_channels(
+        ping.seq_no,
+        ack_tx.clone(),
+        Some(nack_tx),
+        sent,
+        probe_interval,
+      )
+      .await;
+
+    let target = node.id();
+
+    macro_rules! apply_delta {
+      ($this:ident <= $delta:expr) => {
+        $this.inner.awareness.apply_delta($delta).await;
+      };
+    }
+
+    if node.state == NodeState::Alive {
+      let mut mbuf = BytesMut::with_capacity(MessageType::SIZE + ping.encoded_len());
+      mbuf.put_u8(MessageType::Ping as u8);
+      ping.encode_to(&mut mbuf);
+      if let Err(e) = self.send_msg(target, Message(mbuf)).await {
+        tracing::error!(target = "showbiz", source = %self.inner.id, target = %target, err=%e, "failed to send UDP ping");
+        if e.failed_remote() {
+          // TODO: handle_remote_failure
+        } else {
+          apply_delta!(self <= 0);
+          return;
+        }
+      }
+    } else {
+      let mut ping_buf = BytesMut::with_capacity(MessageType::SIZE + ping.encoded_len());
+      ping_buf.put_u8(MessageType::Ping as u8);
+      ping.encode_to(&mut ping_buf);
+
+      let suspect = Suspect {
+        incarnation: node.incarnation,
+        node: target.clone(),
+        from: self.inner.id.clone(),
+      };
+      let mut suspect_buf = BytesMut::with_capacity(MessageType::SIZE + suspect.encoded_len());
+      suspect_buf.put_u8(MessageType::Suspect as u8);
+      suspect.encode_to(&mut suspect_buf);
+      let compound = Message::compound(vec![Message(ping_buf), Message(suspect_buf)]);
+      if let Err(e) = self.raw_send_msg_packet(target, compound).await {
+        tracing::error!(target = "showbiz", source = %self.inner.id, target = %target, err=%e, "failed to send UDP compound ping and suspect message");
+        if e.failed_remote() {
+          // TODO: handle remote failure
+        } else {
+          apply_delta!(self <= 0);
+          return;
+        }
+      }
+    }
+
+    let delegate = self.inner.delegate.as_ref();
+
+    // Wait for response or round-trip-time.
+    futures_util::select! {
+      v = ack_rx.recv().fuse() => {
+        match v {
+          Ok(v) => {
+            if v.complete {
+              if let Some(delegate) = delegate {
+                let rtt = v.timestamp.elapsed();
+
+                if let Err(e) = delegate.notify_ping_complete(node.node.clone(), rtt, v.payload).await {
+                  tracing::error!(target = "showbiz", source = %self.inner.id, target = %target, err=%e, "failed to notify ping complete ack");
+                }
+              }
+
+              apply_delta!(self <= -1);
+              return;
+            }
+
+            // As an edge case, if we get a timeout, we need to re-enqueue it
+            // here to break out of the select below.
+            if !v.complete {
+              if let Err(e) = ack_tx.send(v).await {
+                tracing::error!(target = "showbiz", source = %self.inner.id, target = %target, err=%e, "failed to re-enqueue UDP ping ack");
+              }
+            }
+          }
+          Err(e) => {
+            // This branch should never be reached, if there's an error in your log, please report an issue.
+            tracing::debug!(target = "showbiz", source = %self.inner.id, target = %target, err = %e, "failed UDP ping (ack channel closed)");
+          }
+        }
+      },
+      _ = Delay::new(self.inner.opts.probe_timeout).fuse() => {
+        // Note that we don't scale this timeout based on awareness and
+        // the health score. That's because we don't really expect waiting
+        // longer to help get UDP through. Since health does extend the
+        // probe interval it will give the TCP fallback more time, which
+        // is more active in dealing with lost packets, and it gives more
+        // time to wait for indirect acks/nacks.
+        tracing::debug!(target = "showbiz", source = %self.inner.id, target = %target, "failed UDP ping (timeout reached)");
+      }
+    }
   }
 
   /// Used when the tick wraps around. It will reap the
@@ -522,6 +672,7 @@ where
     seq_no: u32,
     ack_tx: async_channel::Sender<AckMessage>,
     nack_tx: Option<async_channel::Sender<()>>,
+    sent: Instant,
     timeout: Duration,
   ) {
     let tx = ack_tx.clone();
@@ -565,7 +716,7 @@ where
             futures_util::select! {
               _ = ack_tx.send(AckMessage {
                 payload: Bytes::new(),
-                timestamp: Instant::now(),
+                timestamp: sent,
                 complete: false,
               }).fuse() => {},
               default => {}

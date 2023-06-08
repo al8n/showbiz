@@ -18,7 +18,7 @@ use futures_util::future::FutureExt;
 mod packet;
 mod stream;
 
-#[derive(Debug, thiserror::Error)]
+#[derive(thiserror::Error)]
 pub enum NetworkError<T: Transport> {
   #[error("{0}")]
   Transport(#[from] TransportError<T>),
@@ -35,6 +35,12 @@ pub enum NetworkError<T: Transport> {
     expected: MessageType,
     got: MessageType,
   },
+}
+
+impl<T: Transport> core::fmt::Debug for NetworkError<T> {
+  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    write!(f, "{self}")
+  }
 }
 
 impl<D: Delegate, T: Transport, S: Spawner> Showbiz<D, T, S> {
@@ -93,14 +99,14 @@ impl<D: Delegate, T: Transport, S: Spawner> Showbiz<D, T, S> {
     if mt == MessageType::ErrorResponse {
       let err = match data {
         Some(mut d) => match ErrorResponse::decode_len(&mut d) {
-          Ok(len) => ErrorResponse::decode_from(d.split_to(len)).map_err(NetworkError::Decode)?,
-          Err(e) => return Err(NetworkError::Decode(e).into()),
+          Ok(len) => ErrorResponse::decode_from(d.split_to(len)).map_err(TransportError::Decode)?,
+          Err(e) => return Err(TransportError::Decode(e).into()),
         },
         None => {
           let len = conn.read_u32_varint().await.map_err(Error::transport)?;
           let mut buf = vec![0; len];
           conn.read_exact(&mut buf).await.map_err(Error::transport)?;
-          ErrorResponse::decode_from(buf.into()).map_err(NetworkError::Decode)?
+          ErrorResponse::decode_from(buf.into()).map_err(TransportError::Decode)?
         }
       };
       return Err(NetworkError::Remote(err.err).into());

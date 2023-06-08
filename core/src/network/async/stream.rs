@@ -1,5 +1,5 @@
 use crate::{
-  transport::ReliableConnection,
+  transport::{ConnectionError, ConnectionErrorKind, ConnectionKind, ReliableConnection},
   types::{Node, NodeId},
 };
 
@@ -94,12 +94,12 @@ where
     {
       Ok((mt, lr)) => (mt, lr),
       Err(e) => match e {
-        Error::Network(NetworkError::IO(e)) => {
-          if e.kind() != std::io::ErrorKind::UnexpectedEof {
-            tracing::error!(target = "showbiz", err=%e, remote_node = ?addr, "failed to receive");
+        Error::Transport(TransportError::Connection(err)) => {
+          if err.error.kind() != std::io::ErrorKind::UnexpectedEof {
+            tracing::error!(target = "showbiz", err=%err, remote_node = ?addr, "failed to receive");
           }
 
-          let err_resp = ErrorResponse::new(e);
+          let err_resp = ErrorResponse::new(err);
           let mut out = BytesMut::with_capacity(MessageType::SIZE + err_resp.encoded_len());
           out.put_u8(MessageType::ErrorResponse as u8);
           err_resp.encode_to(&mut out);
@@ -255,15 +255,15 @@ where
     let (header, mut data) = match data {
       Some(mut data) => {
         // consume total msg len
-        let _ =
-          decode_u32_from_buf(&mut data).map_err(|e| NetworkError::Decode(DecodeError::from(e)))?;
+        let _ = decode_u32_from_buf(&mut data)
+          .map_err(|e| TransportError::Decode(DecodeError::from(e)))?;
         let len = match PushPullHeader::decode_len(&mut data) {
           Ok(len) => len,
-          Err(e) => return Err(NetworkError::Decode(e).into()),
+          Err(e) => return Err(TransportError::Decode(e).into()),
         };
         let h = match PushPullHeader::decode_from(data.split_to(len as usize)) {
           Ok(header) => header,
-          Err(e) => return Err(NetworkError::Decode(e).into()),
+          Err(e) => return Err(TransportError::Decode(e).into()),
         };
 
         (h, data)
@@ -273,11 +273,11 @@ where
         let mut buf = vec![0; total_len];
         conn.read_exact(&mut buf).await.map_err(Error::transport)?;
         let mut buf: Bytes = buf.into();
-        let len = PushPullHeader::decode_len(&mut buf).map_err(NetworkError::Decode)? as usize;
+        let len = PushPullHeader::decode_len(&mut buf).map_err(TransportError::Decode)? as usize;
 
         let h = match PushPullHeader::decode_from(buf.split_to(len)) {
           Ok(header) => header,
-          Err(e) => return Err(NetworkError::Decode(e).into()),
+          Err(e) => return Err(TransportError::Decode(e).into()),
         };
         (h, buf)
       }
@@ -288,16 +288,16 @@ where
 
     // Try to decode all the states
     for _ in 0..header.nodes {
-      let len = PushNodeState::decode_len(&mut data).map_err(NetworkError::Decode)?;
+      let len = PushNodeState::decode_len(&mut data).map_err(TransportError::Decode)?;
       if len > data.remaining() {
         return Err(
-          NetworkError::Decode(DecodeError::FailReadRemoteState(data.remaining(), len)).into(),
+          TransportError::Decode(DecodeError::FailReadRemoteState(data.remaining(), len)).into(),
         );
       }
 
       match PushNodeState::decode_from(data.split_to(len)) {
         Ok(state) => remote_nodes.push(state),
-        Err(e) => return Err(NetworkError::Decode(e).into()),
+        Err(e) => return Err(TransportError::Decode(e).into()),
       }
     }
 
@@ -305,7 +305,7 @@ where
     if header.user_state_len > 0 {
       if header.user_state_len as usize > data.remaining() {
         return Err(
-          NetworkError::Decode(DecodeError::FailReadUserState(
+          TransportError::Decode(DecodeError::FailReadUserState(
             data.remaining(),
             header.user_state_len as usize,
           ))
@@ -635,10 +635,11 @@ where
       Ok(n) => {
         if n == 0 {
           return Err(
-            NetworkError::IO(std::io::Error::new(
-              std::io::ErrorKind::UnexpectedEof,
-              "eof",
-            ))
+            TransportError::Connection(ConnectionError {
+              kind: ConnectionKind::Reliable,
+              error_kind: ConnectionErrorKind::Read,
+              error: std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "eof"),
+            })
             .into(),
           );
         }
@@ -672,7 +673,7 @@ where
       // Reset message type and buf conn
       mt = match MessageType::try_from(plain[0]) {
         Ok(mt) => mt,
-        Err(e) => return Err(NetworkError::Decode(DecodeError::from(e)).into()),
+        Err(e) => return Err(TransportError::Decode(DecodeError::from(e)).into()),
       };
 
       plain.advance(1);

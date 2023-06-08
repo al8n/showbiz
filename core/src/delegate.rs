@@ -142,7 +142,7 @@ pub trait Delegate: Send + Sync + 'static {
   #[cfg(not(feature = "async"))]
   fn notify_ping_complete(
     &self,
-    node: &Node,
+    node: Arc<Node>,
     rtt: std::time::Duration,
     payload: Bytes,
   ) -> Result<(), Self::Error>;
@@ -151,7 +151,7 @@ pub trait Delegate: Send + Sync + 'static {
   #[cfg(feature = "async")]
   async fn notify_ping_complete(
     &self,
-    node: &Node,
+    node: Arc<Node>,
     rtt: std::time::Duration,
     payload: Bytes,
   ) -> Result<(), Self::Error>;
@@ -360,7 +360,7 @@ impl Delegate for VoidDelegate {
   #[cfg(not(feature = "async"))]
   fn notify_ping_complete(
     &self,
-    node: &Node,
+    node: Arc<Node>,
     rtt: std::time::Duration,
     payload: Bytes,
   ) -> Result<(), Self::Error> {
@@ -371,7 +371,7 @@ impl Delegate for VoidDelegate {
   #[cfg(feature = "async")]
   async fn notify_ping_complete(
     &self,
-    node: &Node,
+    node: Arc<Node>,
     rtt: std::time::Duration,
     payload: Bytes,
   ) -> Result<(), Self::Error> {
