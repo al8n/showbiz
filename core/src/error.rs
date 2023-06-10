@@ -52,6 +52,8 @@ pub enum Error<D: Delegate, T: Transport> {
   Network(#[from] NetworkError<T>),
   #[error("showbiz: no response from node {0}")]
   NoPingResponse(NodeId),
+  #[error("showbiz: {0}")]
+  Other(String),
 }
 
 impl<D: Delegate, T: Transport> core::fmt::Debug for Error<D, T> {

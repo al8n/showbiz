@@ -350,7 +350,6 @@ where
           port: Some(addr.port()),
           addr: addr.ip().into(),
         };
-        let spawner = self.inner.spawner;
         if let Err(e) = self.push_pull_node(&id, true).await {
           tracing::debug!(
             target = "showbiz",

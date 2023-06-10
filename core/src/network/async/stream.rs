@@ -89,6 +89,7 @@ where
       encryption_enabled,
       self.inner.keyring.as_ref(),
       &self.inner.opts,
+      &self.inner.metrics_labels,
     )
     .await
     {
@@ -174,11 +175,9 @@ where
           }
         };
 
-        if let Some(target) = &ping.target {
-          if target != &self.inner.id {
-            tracing::error!(target = "showbiz", remote_node = %addr, "got ping for unexpected node {}", target);
-            return;
-          }
+        if &ping.target != &self.inner.id {
+          tracing::error!(target = "showbiz", local= %self.inner.id, remote = %addr, "got ping for unexpected node {}", ping.target);
+          return;
         }
 
         let ack = AckResponse::empty(ping.seq_no);
@@ -563,7 +562,7 @@ where
       .await
   }
 
-  async fn raw_send_msg_stream(
+  pub(super) async fn raw_send_msg_stream(
     &self,
     conn: &mut ReliableConnection<T>,
     label: &[u8],
@@ -628,6 +627,7 @@ where
     encryption_enabled: bool,
     keyring: Option<&SecretKeyring>,
     opts: &Options,
+    metrics_labels: &[metrics::Label],
   ) -> Result<(Option<Bytes>, MessageType), Error<D, T>> {
     // Read the message type
     let mut buf = [0u8; 1];
@@ -665,7 +665,7 @@ where
         return Err(SecurityError::NotConfigured.into());
       };
 
-      let mut plain = match Self::decrypt_remote_state(conn, label, keyring).await {
+      let mut plain = match Self::decrypt_remote_state(conn, label, keyring, metrics_labels).await {
         Ok(plain) => plain,
         Err(_e) => return Err(NetworkError::Decrypt.into()),
       };

@@ -44,6 +44,79 @@ impl<T: Transport> core::fmt::Debug for NetworkError<T> {
 }
 
 impl<D: Delegate, T: Transport, S: Spawner> Showbiz<D, T, S> {
+  pub(crate) async fn send_ping_and_wait_for_ack(
+    &self,
+    target: &NodeId,
+    ping: Ping,
+    deadline: Duration,
+  ) -> Result<bool, Error<D, T>> {
+    let Ok(mut conn) = self.inner.transport.dial_address_timeout(target, deadline).await else {
+      // If the node is actually dead we expect this to fail, so we
+      // shouldn't spam the logs with it. After this point, errors
+      // with the connection are real, unexpected errors and should
+      // get propagated up.
+      return Ok(false);
+    };
+    if deadline != Duration::ZERO {
+      conn.set_timeout(Some(deadline));
+    }
+
+    let mut out = BytesMut::with_capacity(MessageType::SIZE + ping.encoded_len());
+    out.put_u8(MessageType::Ping as u8);
+    ping.encode_to(&mut out);
+
+    let encryption_enabled = self.encryption_enabled().await;
+    self
+      .raw_send_msg_stream(
+        &mut conn,
+        &self.inner.opts.label,
+        out.freeze(),
+        target,
+        encryption_enabled,
+      )
+      .await?;
+
+    let (data, mt) = Self::read_stream(
+      &mut conn,
+      &self.inner.opts.label,
+      encryption_enabled,
+      self.inner.keyring.as_ref(),
+      &self.inner.opts,
+      &self.inner.metrics_labels,
+    )
+    .await?;
+
+    if mt != MessageType::AckResponse {
+      return Err(Error::Other(format!(
+        "unexpected message type: {} from ping",
+        mt
+      )));
+    }
+
+    let ack = match data {
+      Some(mut d) => match AckResponse::decode_len(&mut d) {
+        Ok(len) => AckResponse::decode_from::<T::Checksumer>(d.split_to(len))
+          .map_err(TransportError::Decode)?,
+        Err(e) => return Err(TransportError::Decode(e).into()),
+      },
+      None => {
+        let len = conn.read_u32_varint().await.map_err(Error::transport)?;
+        let mut buf = vec![0; len];
+        conn.read_exact(&mut buf).await.map_err(Error::transport)?;
+        AckResponse::decode_from::<T::Checksumer>(buf.into()).map_err(TransportError::Decode)?
+      }
+    };
+
+    if ack.seq_no != ping.seq_no {
+      return Err(Error::Other(format!(
+        "sequence number from ack ({}) doesn't match ping ({})",
+        ack.seq_no, ping.seq_no
+      )));
+    }
+
+    Ok(true)
+  }
+
   /// Used to initiate a push/pull over a stream with a
   /// remote host.
   pub(crate) async fn send_and_receive_state(
@@ -93,6 +166,7 @@ impl<D: Delegate, T: Transport, S: Spawner> Showbiz<D, T, S> {
       encryption_enabled,
       self.inner.keyring.as_ref(),
       &self.inner.opts,
+      &self.inner.metrics_labels,
     )
     .await?;
 
@@ -179,8 +253,10 @@ impl<D: Delegate, T: Transport, S: Spawner> Showbiz<D, T, S> {
     r: &mut ReliableConnection<T>,
     stream_label: &[u8],
     keyring: &SecretKeyring,
+    metrics_labels: &[metrics::Label],
   ) -> Result<Bytes, Error<D, T>> {
-    let meta_size = core::mem::size_of::<u8>() + core::mem::size_of::<u32>();
+    // Read in enough to determine message length
+    let meta_size = MessageType::SIZE + core::mem::size_of::<u32>();
     let mut buf = BytesMut::with_capacity(meta_size);
     buf.put_u8(MessageType::Encrypt as u8);
     let mut b = [0u8; core::mem::size_of::<u32>()];
@@ -190,11 +266,16 @@ impl<D: Delegate, T: Transport, S: Spawner> Showbiz<D, T, S> {
     // Ensure we aren't asked to download too much. This is to guard against
     // an attack vector where a huge amount of state is sent
     let more_bytes = u32::from_be_bytes(b) as usize;
+    #[cfg(feature = "metrics")]
+    {
+      add_sample_to_remote_size_histogram(more_bytes as f64, metrics_labels.iter());
+    }
+
     if more_bytes > MAX_PUSH_STATE_BYTES {
       return Err(Error::LargeRemoteState(more_bytes));
     }
 
-    //Start reporting the size before you cross the limit
+    // Start reporting the size before you cross the limit
     if more_bytes > (0.6 * (MAX_PUSH_STATE_BYTES as f64)).floor() as usize {
       tracing::warn!(
         target = "showbiz",
@@ -206,7 +287,9 @@ impl<D: Delegate, T: Transport, S: Spawner> Showbiz<D, T, S> {
 
     // Read in the rest of the payload
     buf.resize(meta_size + more_bytes, 0);
-    r.read_exact(&mut buf).await.map_err(Error::transport)?;
+    r.read_exact(&mut buf[meta_size..])
+      .await
+      .map_err(Error::transport)?;
 
     // Decrypt the cipherText with some authenticated data
     //

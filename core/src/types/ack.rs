@@ -69,6 +69,13 @@ impl AckResponse {
   }
 
   #[inline]
+  pub fn decode_len(mut buf: impl Buf) -> Result<usize, DecodeError> {
+    decode_u32_from_buf(buf)
+      .map(|(len, _)| len as usize)
+      .map_err(From::from)
+  }
+
+  #[inline]
   pub fn encoded_len(&self) -> usize {
     let length = if self.payload.is_empty() {
       0

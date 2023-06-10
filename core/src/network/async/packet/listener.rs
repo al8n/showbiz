@@ -240,24 +240,22 @@ where
     let p = match Ping::decode_from(buf) {
       Ok(ping) => ping,
       Err(e) => {
-        tracing::error!(target = "showbiz", addr = %from, err = %e, "failed to decode ping request");
+        tracing::error!(target = "showbiz", local=%self.inner.id, remote = %from, err = %e, "failed to decode ping request");
         return;
       }
     };
 
     // If node is provided, verify that it is for us
-    if let Some(target) = &p.target {
-      if target != &self.inner.id {
-        tracing::error!(target = "showbiz", addr = %from, "got ping for unexpected node '{}'", target);
-        return;
-      }
+    if &p.target != &self.inner.id {
+      tracing::error!(target = "showbiz", local=%self.inner.id, remote = %from, "got ping for unexpected node '{}'", p.target);
+      return;
     }
 
     let msg = if let Some(delegate) = &self.inner.delegate {
       let payload = match delegate.ack_payload().await {
         Ok(payload) => payload,
         Err(e) => {
-          tracing::error!(target = "showbiz", addr = %from, err = %e, "failed to get ack payload from delegate");
+          tracing::error!(target = "showbiz", local=%self.inner.id, remote = %from, err = %e, "failed to get ack payload from delegate");
           return;
         }
       };
@@ -347,7 +345,7 @@ where
     ping.encode_to(&mut out);
 
     // TODO: change ind ping struct encoding
-    if let Err(e) = self.send_msg(&ind.ping.target.unwrap(), Message(out)).await {
+    if let Err(e) = self.send_msg(&ind.ping.target, Message(out)).await {
       tracing::error!(target = "showbiz", addr = %from, err = %e, "failed to send ping");
     }
 

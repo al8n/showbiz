@@ -7,14 +7,14 @@ use crate::{
   suspicion::Suspicion,
   timer::Timer,
   transport::TransportError,
-  types::{Alive, Dead, Message, MessageType, Name, Ping, Suspect},
+  types::{Alive, Dead, IndirectPing, Message, MessageType, Name, Ping, Suspect},
 };
 
 use super::*;
 use bytes::{BufMut, Bytes, BytesMut};
 use futures_channel::oneshot::Sender;
 use futures_timer::Delay;
-use futures_util::{future::BoxFuture, FutureExt};
+use futures_util::{future::BoxFuture, FutureExt, StreamExt};
 use rand::seq::SliceRandom;
 
 fn random_offset(n: usize) -> usize {
@@ -92,7 +92,7 @@ where
         port: Some(self_addr.port()),
         addr: self_addr.ip().into(),
       },
-      target: Some(node.clone()),
+      target: node.clone(),
     };
 
     let (ack_tx, ack_rx) = async_channel::bounded(self.inner.opts.indirect_checks + 1);
@@ -474,13 +474,19 @@ fn move_dead_nodes(nodes: &mut Vec<LocalNodeState>, gossip_to_the_dead_time: Dur
   n - num_dead
 }
 
+macro_rules! apply_delta {
+  ($this:ident <= $delta:expr) => {
+    $this.inner.awareness.apply_delta($delta).await;
+  };
+}
+
 impl<D, T, S> Showbiz<D, T, S>
 where
   T: Transport,
   D: Delegate,
   S: Spawner,
 {
-  async fn probe_node(&self, node: &LocalNodeState) {
+  async fn probe_node(&self, target: &LocalNodeState) {
     #[cfg(feature = "metrics")]
     let now = Instant::now();
     #[cfg(feature = "metrics")]
@@ -505,19 +511,19 @@ where
     }
 
     // Prepare a ping message and setup an ack handler.
-    let addr = self.get_advertise().await;
+    let self_addr = self.get_advertise().await;
     let ping = Ping {
       seq_no: self.next_seq_no(),
       source: NodeId {
         name: self.inner.opts.name.clone(),
-        port: Some(addr.port()),
-        addr: addr.ip().into(),
+        port: Some(self_addr.port()),
+        addr: self_addr.ip().into(),
       },
-      target: Some(node.id().clone()),
+      target: target.id().clone(),
     };
 
-    let (ack_tx, ack_rx) = async_channel::bounded(1);
-    let (nack_tx, nack_rx) = async_channel::bounded(1);
+    let (ack_tx, ack_rx) = async_channel::bounded(self.inner.opts.indirect_checks + 1);
+    let (nack_tx, nack_rx) = async_channel::bounded(self.inner.opts.indirect_checks + 1);
 
     // Mark the sent time here, which should be after any pre-processing but
     // before system calls to do the actual send. This probably over-reports
@@ -529,7 +535,6 @@ where
     // also tack on a suspect message so that it has a chance to refute as
     // soon as possible.
     let deadline = sent + probe_interval;
-
     self
       .set_probe_channels(
         ping.seq_no,
@@ -540,26 +545,18 @@ where
       )
       .await;
 
-    let target = node.id();
-
-    macro_rules! apply_delta {
-      ($this:ident <= $delta:expr) => {
-        $this.inner.awareness.apply_delta($delta).await;
-      };
-    }
-
-    if node.state == NodeState::Alive {
+    if target.state == NodeState::Alive {
       let mut mbuf = BytesMut::with_capacity(MessageType::SIZE + ping.encoded_len());
       mbuf.put_u8(MessageType::Ping as u8);
       ping.encode_to(&mut mbuf);
-      if let Err(e) = self.send_msg(target, Message(mbuf)).await {
-        tracing::error!(target = "showbiz", source = %self.inner.id, target = %target, err=%e, "failed to send UDP ping");
+      if let Err(e) = self.send_msg(target.id(), Message(mbuf)).await {
+        tracing::error!(target = "showbiz", local = %self.inner.id, remote = %target.id(), err=%e, "failed to send ping by unreliable connection");
         if e.failed_remote() {
-          // TODO: handle_remote_failure
-        } else {
-          apply_delta!(self <= 0);
-          return;
+          self
+            .handle_remote_failure(target, ping, ack_rx, nack_rx, deadline)
+            .await;
         }
+        return;
       }
     } else {
       let mut ping_buf = BytesMut::with_capacity(MessageType::SIZE + ping.encoded_len());
@@ -567,22 +564,22 @@ where
       ping.encode_to(&mut ping_buf);
 
       let suspect = Suspect {
-        incarnation: node.incarnation,
-        node: target.clone(),
+        incarnation: target.incarnation,
+        node: target.id().clone(),
         from: self.inner.id.clone(),
       };
       let mut suspect_buf = BytesMut::with_capacity(MessageType::SIZE + suspect.encoded_len());
       suspect_buf.put_u8(MessageType::Suspect as u8);
       suspect.encode_to(&mut suspect_buf);
       let compound = Message::compound(vec![Message(ping_buf), Message(suspect_buf)]);
-      if let Err(e) = self.raw_send_msg_packet(target, compound).await {
-        tracing::error!(target = "showbiz", source = %self.inner.id, target = %target, err=%e, "failed to send UDP compound ping and suspect message");
+      if let Err(e) = self.raw_send_msg_packet(target.id(), compound).await {
+        tracing::error!(target = "showbiz", local = %self.inner.id, remote = %target.id(), err=%e, "failed to send compound ping and suspect message by unreliable connection");
         if e.failed_remote() {
-          // TODO: handle remote failure
-        } else {
-          apply_delta!(self <= 0);
-          return;
+          self
+            .handle_remote_failure(target, ping, ack_rx, nack_rx, deadline)
+            .await;
         }
+        return;
       }
     }
 
@@ -597,8 +594,8 @@ where
               if let Some(delegate) = delegate {
                 let rtt = v.timestamp.elapsed();
 
-                if let Err(e) = delegate.notify_ping_complete(node.node.clone(), rtt, v.payload).await {
-                  tracing::error!(target = "showbiz", source = %self.inner.id, target = %target, err=%e, "failed to notify ping complete ack");
+                if let Err(e) = delegate.notify_ping_complete(target.node.clone(), rtt, v.payload).await {
+                  tracing::error!(target = "showbiz", local = %self.inner.id, remote = %target.id(), err=%e, "failed to notify ping complete ack");
                 }
               }
 
@@ -610,13 +607,13 @@ where
             // here to break out of the select below.
             if !v.complete {
               if let Err(e) = ack_tx.send(v).await {
-                tracing::error!(target = "showbiz", source = %self.inner.id, target = %target, err=%e, "failed to re-enqueue UDP ping ack");
+                tracing::error!(target = "showbiz", local = %self.inner.id, remote = %target.id(), err=%e, "failed to re-enqueue UDP ping ack");
               }
             }
           }
           Err(e) => {
             // This branch should never be reached, if there's an error in your log, please report an issue.
-            tracing::debug!(target = "showbiz", source = %self.inner.id, target = %target, err = %e, "failed UDP ping (ack channel closed)");
+            tracing::debug!(target = "showbiz", local = %self.inner.id, remote = %target.id(), err = %e, "failed unreliable connection ping (ack channel closed)");
           }
         }
       },
@@ -627,8 +624,148 @@ where
         // probe interval it will give the TCP fallback more time, which
         // is more active in dealing with lost packets, and it gives more
         // time to wait for indirect acks/nacks.
-        tracing::debug!(target = "showbiz", source = %self.inner.id, target = %target, "failed UDP ping (timeout reached)");
+        tracing::debug!(target = "showbiz", local = %self.inner.id, remote = %target.id(), "failed unreliable connection ping (timeout reached)");
       }
+    }
+
+    self
+      .handle_remote_failure(target, ping, ack_rx, nack_rx, deadline)
+      .await
+  }
+
+  async fn handle_remote_failure(
+    &self,
+    target: &LocalNodeState,
+    ping: Ping,
+    ack_rx: async_channel::Receiver<AckMessage>,
+    nack_rx: async_channel::Receiver<()>,
+    deadline: Instant,
+  ) {
+    // Get some random live nodes.
+    let nodes = {
+      let memberlist = self.inner.nodes.read().await;
+      random_nodes(
+        self.inner.opts.indirect_checks,
+        &memberlist,
+        Some(|n: &LocalNodeState| n.id() == target.id() || n.state != NodeState::Alive),
+      )
+    };
+
+    // Attempt an indirect ping.
+    let expected_nacks = nodes.len() as isize;
+    let ind = IndirectPing { nack: true, ping };
+
+    for peer in nodes {
+      // We only expect nack to be sent from peers who understand
+      // version 4 of the protocol.
+      let mut buf = BytesMut::with_capacity(MessageType::SIZE + ind.encoded_len());
+      buf.put_u8(MessageType::IndirectPing as u8);
+      ind.encode_to(&mut buf);
+      if let Err(e) = self.send_msg(ind.ping.target(), Message(buf)).await {
+        tracing::error!(target = "showbiz", local = %self.inner.id, remote = %peer, err=%e, "failed to send indirect unreliable ping");
+      }
+    }
+
+    // Also make an attempt to contact the node directly over TCP. This
+    // helps prevent confused clients who get isolated from UDP traffic
+    // but can still speak TCP (which also means they can possibly report
+    // misinformation to other nodes via anti-entropy), avoiding flapping in
+    // the cluster.
+    //
+    // This is a little unusual because we will attempt a TCP ping to any
+    // member who understands version 3 of the protocol, regardless of
+    // which protocol version we are speaking. That's why we've included a
+    // config option to turn this off if desired.
+    let (fallback_tx, fallback_rx) = futures_channel::oneshot::channel();
+
+    let mut disable_reliable_pings = self.inner.opts.disable_tcp_pings;
+    if let Some(delegate) = self.inner.delegate.as_ref() {
+      disable_reliable_pings |= delegate.disable_reliable_pings(target.id());
+    }
+    if !disable_reliable_pings {
+      let target_id = target.id().clone();
+      let this = self.clone();
+      self.inner.spawner.spawn(async move {
+        match this.send_ping_and_wait_for_ack(&target_id, ind.ping, deadline - Instant::now()).await {
+          Ok(ack) => {
+            // The error should never happen, because we do not drop the rx,
+            // handle error here for good manner, and if you see this log, please
+            // report an issue.
+            if let Err(e) = fallback_tx.send(ack) {
+              tracing::error!(target = "showbiz", local = %this.inner.id, remote = %target_id, err=%e, "failed to send fallback");
+            }
+          }
+          Err(e) => {
+            tracing::error!(target = "showbiz", local = %this.inner.id, remote = %target_id, err=%e, "failed to send ping by reliable connection");
+            // The error should never happen, because we do not drop the rx,
+            // handle error here for good manner, and if you see this log, please
+            // report an issue.
+            if let Err(e) = fallback_tx.send(false) {
+              tracing::error!(target = "showbiz", local = %this.inner.id, remote = %target_id, err=%e, "failed to send fallback");
+            }
+          }
+        }
+      }.boxed());
+    }
+
+    // Wait for the acks or timeout. Note that we don't check the fallback
+    // channel here because we want to issue a warning below if that's the
+    // *only* way we hear back from the peer, so we have to let this time
+    // out first to allow the normal unreliable-connection-based acks to come in.
+    futures_util::select! {
+      v = ack_rx.recv().fuse() => {
+        if let Ok(v) = v {
+          if v.complete {
+            apply_delta!(self <= -1);
+            return;
+          }
+        }
+      }
+    }
+
+    // Finally, poll the fallback channel. The timeouts are set such that
+    // the channel will have something or be closed without having to wait
+    // any additional time here.
+    if !disable_reliable_pings {
+      if let Ok(did_contact) = fallback_rx.await {
+        if did_contact {
+          tracing::warn!(target = "showbiz", local = %self.inner.id, remote = %target.id(), "was able to connect to target over reliable connection but unreliable probes failed, network may be misconfigured");
+          apply_delta!(self <= -1);
+          return;
+        }
+      }
+    }
+
+    // Update our self-awareness based on the results of this failed probe.
+    // If we don't have peers who will send nacks then we penalize for any
+    // failed probe as a simple health metric. If we do have peers to nack
+    // verify, then we can use that as a more sophisticated measure of self-
+    // health because we assume them to be working, and they can help us
+    // decide if the probed node was really dead or if it was something wrong
+    // with ourselves.
+    let awareness_delta = if expected_nacks > 0 {
+      let nack_count = nack_rx.len() as isize;
+      if nack_count < expected_nacks {
+        expected_nacks - nack_count - 1
+      } else {
+        0
+      }
+    } else {
+      0
+    };
+
+    // No acks received from target, suspect it as failed.
+    tracing::info!(target = "showbiz", local = %self.inner.id, remote = %target.id(), "suspecting has failed, no acks received");
+    let s = Suspect {
+      incarnation: target.incarnation,
+      node: target.id().clone(),
+      from: self.inner.id.clone(),
+    };
+    if let Err(e) = self.suspect_node(s).await {
+      tracing::error!(target = "showbiz", local = %self.inner.id, remote = %target.id(), err=%e, "failed to suspect node");
+    }
+    if awareness_delta != 0 {
+      apply_delta!(self <= awareness_delta);
     }
   }
 

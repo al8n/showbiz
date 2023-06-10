@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use bytes::Bytes;
 
-use crate::types::{Message, Node};
+use crate::types::{Message, Node, NodeId};
 
 #[cfg_attr(feature = "async", async_trait::async_trait)]
 pub trait Delegate: Send + Sync + 'static {
@@ -155,6 +155,10 @@ pub trait Delegate: Send + Sync + 'static {
     rtt: std::time::Duration,
     payload: Bytes,
   ) -> Result<(), Self::Error>;
+
+  /// Invoked when we want to send a ping message to target by reliable connection. Return true if the target node does not expect ping message from reliable connection.
+  #[inline]
+  fn disable_reliable_pings(&self, target: &NodeId) -> bool;
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -376,5 +380,10 @@ impl Delegate for VoidDelegate {
     payload: Bytes,
   ) -> Result<(), Self::Error> {
     Ok(())
+  }
+
+  #[inline]
+  fn disable_reliable_pings(&self, node: &NodeId) -> bool {
+    false
   }
 }

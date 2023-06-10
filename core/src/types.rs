@@ -177,6 +177,31 @@ pub(crate) async fn decode_u32_from_reader<R: futures_util::io::AsyncRead + Unpi
   Err(Error::new(ErrorKind::InvalidData, "invalid u32"))
 }
 
+#[inline]
+const fn socket_addr_encoded_len(addr: &SocketAddr) -> usize {
+  // format is: ip + port
+  match addr {
+    SocketAddr::V4(_) => 4 + 2,
+    SocketAddr::V6(_) => 16 + 2,
+  }
+}
+
+#[inline]
+fn encode_socket_addr_to(addr: &SocketAddr, mut buf: impl BufMut) {
+  match addr {
+    SocketAddr::V4(addr) => {
+      buf.put_u8(0);
+      buf.put_slice(&addr.ip().octets());
+      buf.put_u16(addr.port());
+    }
+    SocketAddr::V6(addr) => {
+      buf.put_u8(1);
+      buf.put_slice(&addr.ip().octets());
+      buf.put_u16(addr.port());
+    }
+  }
+}
+
 mod compress;
 pub use compress::*;
 

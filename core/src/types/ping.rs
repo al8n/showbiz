@@ -8,33 +8,22 @@ pub(crate) struct Ping {
   /// Source node, used for a direct reply
   source: NodeId,
 
-  /// NodeId is sent so the target can verify they are
+  /// `NodeId` is sent so the target can verify they are
   /// the intended recipient. This is to protect again an agent
   /// restart with a new name.
-  target: Option<NodeId>,
+  target: NodeId,
 }
 
 impl Ping {
-  #[inline]
-  pub const fn new(seq_no: u32, source: NodeId) -> Self {
-    Self {
-      seq_no,
-      target: None,
-      source,
-    }
-  }
-
   pub fn with_target(mut self, target: NodeId) -> Self {
-    self.target = Some(target);
+    self.target = target;
     self
   }
 
   #[inline]
   pub fn encoded_len(&self) -> usize {
     let basic = encoded_u32_len(self.seq_no) + 1 // seq_no + tag
-    + if let Some(t) = &self.target {
-      t.encoded_len() + 1 // target + tag
-    } else { 0 }
+    + self.target.encoded_len() + 1 // target + tag
     + self.source.encoded_len() + 1; // source + tag
     basic + encoded_u32_len(basic as u32)
   }
@@ -56,10 +45,8 @@ impl Ping {
     buf.put_u8(2); // source tag
     self.source.encode_to(buf);
 
-    if let Some(target) = &self.target {
-      buf.put_u8(3); // target tag
-      target.encode_to(buf);
-    }
+    buf.put_u8(3); // target tag
+    self.target.encode_to(buf);
   }
 
   #[inline]
@@ -92,13 +79,13 @@ impl Ping {
           if len > buf.remaining() {
             return Err(DecodeError::Truncated(MessageType::Ping.as_err_str()));
           }
-          this.target = Some(NodeId::decode_from(buf.split_to(len))?);
+          this.target = NodeId::decode_from(buf.split_to(len))?;
         }
         _ => {}
       }
     }
 
-    if required != 2 {
+    if required != 3 {
       return Err(DecodeError::Truncated(MessageType::Ping.as_err_str()));
     }
     Ok(this)
@@ -121,7 +108,7 @@ impl IndirectPing {
 
   #[inline]
   pub fn with_target(mut self, target: NodeId) -> Self {
-    self.ping.target = Some(target);
+    self.ping.target = target;
     self
   }
 
