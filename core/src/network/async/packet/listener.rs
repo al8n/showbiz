@@ -303,7 +303,7 @@ where
     let ping = Ping {
       seq_no: local_seq_no,
       source: self.inner.id.clone(),
-      target: ind.ping.target.clone(),
+      target: ind.target.clone(),
     };
 
     // Forward the ack back to the requestor. If the request encodes an origin
@@ -313,8 +313,8 @@ where
     let (cancel_tx, cancel_rx) = futures_channel::oneshot::channel::<()>();
     // Setup a response handler to relay the ack
     let this = self.clone();
-    let ind_source = ind.ping.source.clone();
-    let ind_seq_no = ind.ping.seq_no;
+    let ind_source = ind.source.clone();
+    let ind_seq_no = ind.seq_no;
 
     self
       .set_ack_handler(
@@ -344,38 +344,34 @@ where
     out.put_u8(MessageType::Ping as u8);
     ping.encode_to(&mut out);
 
-    // TODO: change ind ping struct encoding
-    if let Err(e) = self.send_msg(&ind.ping.target, Message(out)).await {
+    if let Err(e) = self.send_msg(&ind.target, Message(out)).await {
       tracing::error!(target = "showbiz", addr = %from, err = %e, "failed to send ping");
     }
 
     // Setup a timer to fire off a nack if no ack is seen in time.
-    if ind.nack {
-      let this = self.clone();
-      let probe_timeout = self.inner.opts.probe_timeout;
-      spawner.spawn(
-        async move {
-          let timer = Delay::new(probe_timeout);
-          futures_util::select! {
-            _ = timer.fuse() => {
-              // We've not received an ack, so send a nack.
-              let nack = NackResponse::new(ind.ping.seq_no);
-              let mut out = BytesMut::with_capacity(MessageType::SIZE + nack.encoded_len());
-              out.put_u8(MessageType::NackResponse as u8);
-              nack.encode_to::<T::Checksumer>(&mut out);
-              let addr = ind.ping.source;
-              if let Err(e) = this.send_msg(&addr, Message(out)).await {
-                tracing::error!(target = "showbiz", addr = %from, err = %e, "failed to send nack");
-              }
-            }
-            _ = cancel_rx.fuse() => {
-              // We've received an ack, so we can cancel the nack.
+    let this = self.clone();
+    let probe_timeout = self.inner.opts.probe_timeout;
+    spawner.spawn(
+      async move {
+        let timer = Delay::new(probe_timeout);
+        futures_util::select! {
+          _ = timer.fuse() => {
+            // We've not received an ack, so send a nack.
+            let nack = NackResponse::new(ind.seq_no);
+            let mut out = BytesMut::with_capacity(MessageType::SIZE + nack.encoded_len());
+            out.put_u8(MessageType::NackResponse as u8);
+            nack.encode_to::<T::Checksumer>(&mut out);
+            if let Err(e) = this.send_msg(&ind.source, Message(out)).await {
+              tracing::error!(target = "showbiz", local = %ind.source, remote = %from, err = %e, "failed to send nack");
             }
           }
+          _ = cancel_rx.fuse() => {
+            // We've received an ack, so we can cancel the nack.
+          }
         }
-        .boxed(),
-      );
-    }
+      }
+      .boxed(),
+    );
   }
 
   async fn handle_ack(&self, mut buf: Bytes, from: SocketAddr, timestamp: Instant) {

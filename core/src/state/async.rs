@@ -653,7 +653,7 @@ where
 
     // Attempt an indirect ping.
     let expected_nacks = nodes.len() as isize;
-    let ind = IndirectPing { nack: true, ping };
+    let ind = IndirectPing::from(ping);
 
     for peer in nodes {
       // We only expect nack to be sent from peers who understand
@@ -661,7 +661,7 @@ where
       let mut buf = BytesMut::with_capacity(MessageType::SIZE + ind.encoded_len());
       buf.put_u8(MessageType::IndirectPing as u8);
       ind.encode_to(&mut buf);
-      if let Err(e) = self.send_msg(ind.ping.target(), Message(buf)).await {
+      if let Err(e) = self.send_msg(ind.target(), Message(buf)).await {
         tracing::error!(target = "showbiz", local = %self.inner.id, remote = %peer, err=%e, "failed to send indirect unreliable ping");
       }
     }
@@ -686,7 +686,7 @@ where
       let target_id = target.id().clone();
       let this = self.clone();
       self.inner.spawner.spawn(async move {
-        match this.send_ping_and_wait_for_ack(&target_id, ind.ping, deadline - Instant::now()).await {
+        match this.send_ping_and_wait_for_ack(&target_id, ind.into(), deadline - Instant::now()).await {
           Ok(ack) => {
             // The error should never happen, because we do not drop the rx,
             // handle error here for good manner, and if you see this log, please
