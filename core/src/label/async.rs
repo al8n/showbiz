@@ -52,7 +52,7 @@ impl<R: AsyncRead> AsyncRead for LabeledConnection<R> {
     self: std::pin::Pin<&mut Self>,
     cx: &mut std::task::Context<'_>,
     buf: &mut [u8],
-  ) -> std::task::Poll<futures_io::Result<usize>> {
+  ) -> std::task::Poll<futures_util::io::Result<usize>> {
     self.project().conn.poll_read(cx, buf)
   }
 }
@@ -61,7 +61,7 @@ impl<R: AsyncBufRead> AsyncBufRead for LabeledConnection<R> {
   fn poll_fill_buf(
     self: std::pin::Pin<&mut Self>,
     cx: &mut std::task::Context<'_>,
-  ) -> std::task::Poll<futures_io::Result<&[u8]>> {
+  ) -> std::task::Poll<futures_util::io::Result<&[u8]>> {
     self.project().conn.poll_fill_buf(cx)
   }
 
@@ -75,83 +75,21 @@ impl<W: AsyncWrite> AsyncWrite for LabeledConnection<W> {
     self: std::pin::Pin<&mut Self>,
     cx: &mut std::task::Context<'_>,
     buf: &[u8],
-  ) -> std::task::Poll<futures_io::Result<usize>> {
+  ) -> std::task::Poll<futures_util::io::Result<usize>> {
     self.project().conn.poll_write(cx, buf)
   }
 
   fn poll_flush(
     self: std::pin::Pin<&mut Self>,
     cx: &mut std::task::Context<'_>,
-  ) -> std::task::Poll<futures_io::Result<()>> {
+  ) -> std::task::Poll<futures_util::io::Result<()>> {
     self.project().conn.poll_flush(cx)
   }
 
   fn poll_close(
     self: std::pin::Pin<&mut Self>,
     cx: &mut std::task::Context<'_>,
-  ) -> std::task::Poll<futures_io::Result<()>> {
+  ) -> std::task::Poll<futures_util::io::Result<()>> {
     self.project().conn.poll_close(cx)
-  }
-}
-
-impl<D: Delegate, T: Transport, S: Spawner> Showbiz<D, T, S> {
-  pub async fn add_label_header_to_stream<W: futures_io::AsyncWrite + std::marker::Unpin>(
-    w: &mut W,
-    label: &[u8],
-  ) -> Result<(), Error<D, T>> {
-    if label.is_empty() {
-      return Ok(());
-    }
-
-    if label.len() > LABEL_MAX_SIZE {
-      return Err(Error::LabelTooLong(label.len()));
-    }
-
-    w.write_all(&[MessageType::HasLabel as u8, label.len() as u8])
-      .await?;
-    w.write_all(label).await.map_err(From::from)
-  }
-
-  /// Removes any label header from the beginning of
-  /// the stream if present and returns it.
-  pub async fn remove_label_header_from_stream<R: futures_io::AsyncRead + std::marker::Unpin>(
-    reader: R,
-  ) -> Result<LabeledConnection<R>, Error<D, T>> {
-    let mut r = BufReader::with_capacity(DEFAULT_BUFFER_SIZE, reader);
-    let buf = match r.fill_buf().await {
-      Ok(buf) => {
-        if buf.is_empty() {
-          return Ok(LabeledConnection::new(r));
-        }
-        buf
-      }
-      Err(e) => {
-        if e.kind() == std::io::ErrorKind::UnexpectedEof {
-          return Ok(LabeledConnection::new(r));
-        } else {
-          return Err(e.into());
-        }
-      }
-    };
-
-    // First check for the type byte.
-    if MessageType::try_from(buf[0])? != MessageType::HasLabel {
-      return Ok(LabeledConnection::new(r));
-    }
-    if buf.len() < 2 {
-      return Err(Error::TruncatedLabel);
-    }
-    let label_size = buf[1] as usize;
-    if label_size < 1 {
-      return Err(Error::EmptyLabel);
-    }
-
-    if buf.len() < 2 + label_size {
-      return Err(Error::TruncatedLabel);
-    }
-
-    let label = Bytes::copy_from_slice(&buf[2..2 + label_size]);
-    r.consume_unpin(2 + label_size);
-    Ok(LabeledConnection::with_label(r, label))
   }
 }

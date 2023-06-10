@@ -15,7 +15,7 @@ use bytes::{BufMut, Bytes, BytesMut};
 use futures_channel::oneshot::Sender;
 use futures_timer::Delay;
 use futures_util::{future::BoxFuture, FutureExt, StreamExt};
-use rand::seq::SliceRandom;
+use rand::{seq::SliceRandom, Rng};
 
 fn random_offset(n: usize) -> usize {
   if n == 0 {
@@ -142,6 +142,10 @@ where
   D: Delegate,
   S: Spawner,
 {
+  /// Used to stop the background maintenance. This is safe
+  /// to call multiple times.
+  pub(crate) async fn deschedule(&self) {}
+
   /// Does a complete state exchange with a specific node.
   pub(crate) async fn push_pull_node(&self, addr: &NodeId, join: bool) -> Result<(), Error<D, T>> {
     #[cfg(feature = "metrics")]
@@ -480,12 +484,152 @@ macro_rules! apply_delta {
   };
 }
 
+macro_rules! bail_trigger {
+  ($fn:ident) => {
+    paste::paste! {
+      async fn [<trigger _ $fn>](&self, stagger: Duration, mut timer: async_io::Timer, stop_rx: async_channel::Receiver<()>)
+      {
+        let this = self.clone();
+        // Use a random stagger to avoid syncronizing
+        let mut rng = rand::thread_rng();
+        let rand_stagger = Duration::from_millis(rng.gen_range(0..stagger.as_millis() as u64));
+        let delay = Delay::new(rand_stagger);
+        futures_util::select! {
+          _ = delay.fuse() => {},
+          _ = stop_rx.recv().fuse() => return,
+        }
+
+        self.inner.spawner.spawn(async move {
+          loop {
+            futures_util::select! {
+              _ = timer.next().fuse() => {
+                this.$fn().await;
+              }
+              _ = stop_rx.recv().fuse() => {
+                return;
+              }
+            }
+          }
+        }.boxed());
+      }
+    }
+  };
+}
+
 impl<D, T, S> Showbiz<D, T, S>
 where
   T: Transport,
   D: Delegate,
   S: Spawner,
 {
+  /// Used to ensure the Tick is performed periodically.
+  pub(crate) async fn schedule(&self) {
+    // Create a new probeTicker
+    if self.inner.opts.probe_interval > Duration::ZERO {
+      self
+        .trigger_probe(
+          self.inner.opts.probe_interval,
+          async_io::Timer::interval(self.inner.opts.probe_interval),
+          self.inner.shutdown_rx.clone(),
+        )
+        .await;
+    }
+
+    // Create a push pull ticker if needed
+    if self.inner.opts.push_pull_interval > Duration::ZERO {
+      self.trigger_push_pull(self.inner.shutdown_rx.clone()).await;
+    }
+
+    // Create a gossip ticker if needed
+    if self.inner.opts.gossip_interval > Duration::ZERO && self.inner.opts.gossip_nodes > 0 {
+      self
+        .trigger_gossip(
+          self.inner.opts.gossip_interval,
+          async_io::Timer::interval(self.inner.opts.gossip_interval),
+          self.inner.shutdown_rx.clone(),
+        )
+        .await;
+    }
+  }
+
+  bail_trigger!(probe);
+
+  bail_trigger!(gossip);
+
+  async fn trigger_push_pull(&self, stop_rx: async_channel::Receiver<()>) {
+    let interval = self.inner.opts.push_pull_interval;
+    let this = self.clone();
+    // Use a random stagger to avoid syncronizing
+    let mut rng = rand::thread_rng();
+    let rand_stagger = Duration::from_millis(rng.gen_range(0..interval.as_millis() as u64));
+    let delay = Delay::new(rand_stagger);
+
+    futures_util::select! {
+      _ = delay.fuse() => {},
+      _ = stop_rx.recv().fuse() => return,
+    }
+
+    self.inner.spawner.spawn(
+      async move {
+        // Tick using a dynamic timer
+        loop {
+          let tick_time = push_pull_scale(interval, this.estimate_num_nodes() as usize);
+          let mut timer = async_io::Timer::interval(tick_time);
+          futures_util::select! {
+            _ = timer.next().fuse() => {
+              this.push_pull().await;
+            }
+            _ = stop_rx.recv().fuse() => return,
+          }
+        }
+      }
+      .boxed(),
+    );
+  }
+
+  // Used to perform a single round of failure detection and gossip
+  async fn probe(&self) {
+    // Track the number of indexes we've considered probing
+    let mut num_check = 0;
+    let mut probe_index = 0;
+    'start: loop {
+      let memberlist = self.inner.nodes.read().await;
+
+      // Make sure we don't wrap around infinitely
+      if num_check >= memberlist.nodes.len() {
+        return;
+      }
+
+      // Handle the wrap around case
+      if probe_index >= memberlist.nodes.len() {
+        drop(memberlist);
+        self.reset_nodes().await;
+        probe_index = 0;
+        num_check += 1;
+        continue;
+      }
+
+      // Determine if we should probe this node
+      let mut skip = false;
+      let node = memberlist.nodes[probe_index].clone();
+      if node.dead_or_left() || node.id() == &self.inner.id {
+        skip = true;
+      }
+
+      // Potentially skip
+      drop(memberlist);
+      probe_index += 1;
+      if skip {
+        num_check += 1;
+        continue;
+      }
+
+      // Probe the specific node
+      self.probe_node(&node).await;
+      return;
+    }
+  }
+
   async fn probe_node(&self, target: &LocalNodeState) {
     #[cfg(feature = "metrics")]
     let now = Instant::now();
@@ -993,4 +1137,25 @@ fn suspicion_timeout(suspicion_mult: usize, n: usize, interval: Duration) -> u64
   let node_scale = (n as f64).log10().max(1.0);
   // multiply by 1000 to keep some precision because time.Duration is an int64 type
   (suspicion_mult as u64) * ((node_scale * 1000.0) as u64) * (interval.as_millis() as u64 / 1000)
+}
+
+/// push_pull_scale is used to scale the time interval at which push/pull
+/// syncs take place. It is used to prevent network saturation as the
+/// cluster size grows
+#[inline]
+fn push_pull_scale(interval: Duration, n: usize) -> Duration {
+  /// the minimum number of nodes
+  /// before we start scaling the push/pull timing. The scale
+  /// effect is the log2(Nodes) - log2(pushPullScale). This means
+  /// that the 33rd node will cause us to double the interval,
+  /// while the 65th will triple it.
+  const PUSH_PULL_SCALE_THRESHOLD: usize = 32;
+
+  // Don't scale until we cross the threshold
+  if n <= PUSH_PULL_SCALE_THRESHOLD {
+    return interval;
+  }
+
+  let multiplier = (f64::log2(n as f64) - f64::log2(PUSH_PULL_SCALE_THRESHOLD as f64) + 1.0).ceil();
+  interval * multiplier as u32
 }

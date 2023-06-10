@@ -8,6 +8,7 @@ use super::*;
 #[test]
 fn test() {}
 
+// --------------------------------------------Crate Level Methods-------------------------------------------------
 impl<D, T, S> Showbiz<D, T, S>
 where
   T: Transport,
@@ -41,206 +42,134 @@ where
     }));
   }
 
-  /// Handles a single incoming stream connection from the transport.
-  async fn handle_conn(self, mut conn: ReliableConnection<T>) {
-    let addr = conn.remote_node().clone();
-    tracing::debug!(target = "showbiz", remote_node = %addr, "stream connection");
+  /// Used to merge the remote state with our local state
+  pub(crate) async fn merge_remote_state(
+    &self,
+    node_state: RemoteNodeState,
+  ) -> Result<(), Error<D, T>> {
+    self.verify_protocol(&node_state.push_states).await?;
 
-    #[cfg(feature = "metrics")]
-    {
-      incr_tcp_accept_counter(self.inner.metrics_labels.iter());
-    }
-
-    if self.inner.opts.tcp_timeout != Duration::ZERO {
-      conn.set_timeout(Some(self.inner.opts.tcp_timeout));
-    }
-
-    let mut stream_label = match conn.remove_label_header().await {
-      Ok(label) => label,
-      Err(e) => {
-        tracing::error!(target = "showbiz", err = %e, remote_node = ?addr, "failed to remove label header");
-        return;
+    // Invoke the merge delegate if any
+    if node_state.join {
+      if let Some(merge) = self.inner.delegate.as_ref() {
+        let peers = node_state
+          .push_states
+          .iter()
+          .map(|n| Node {
+            id: NodeId::from_addr(n.node.addr.clone()).set_name(n.node.name.clone()),
+            meta: n.meta.clone(),
+            state: n.state,
+            pmin: n.pmin(),
+            pmax: n.pmax(),
+            pcur: n.pcur(),
+            dmin: n.dmin(),
+            dmax: n.dmax(),
+            dcur: n.dcur(),
+          })
+          .collect::<Vec<_>>();
+        merge.notify_merge(peers).await.map_err(Error::delegate)?;
       }
-    };
+    }
 
-    if self.inner.opts.skip_inbound_label_check {
-      if !stream_label.is_empty() {
-        tracing::error!(target = "showbiz", remote_node = ?addr, "unexpected double stream label header");
-        return;
+    // Merge the membership state
+    self.merge_state(node_state.push_states).await?;
+
+    // Invoke the delegate for user state
+    if let Some(d) = &self.inner.delegate {
+      if !node_state.user_state.is_empty() {
+        d.merge_remote_state(node_state.user_state, node_state.join)
+          .await
+          .map_err(Error::delegate)?;
       }
-      // Set this from config so that the auth data assertions work below
-      stream_label = self.inner.opts.label.clone();
+    }
+    Ok(())
+  }
+
+  pub(crate) async fn send_user_msg(
+    &self,
+    addr: &NodeId,
+    msg: crate::types::Message,
+  ) -> Result<(), Error<D, T>> {
+    if addr.name().is_empty() && self.inner.opts.require_node_names {
+      return Err(Error::MissingNodeName);
+    }
+    let mut conn = self
+      .inner
+      .transport
+      .dial_address_timeout(addr, self.inner.opts.tcp_timeout)
+      .await
+      .map_err(Error::transport)?;
+
+    self
+      .raw_send_msg_stream(
+        &mut conn,
+        &self.inner.opts.label,
+        msg.freeze(),
+        addr,
+        self.encryption_enabled().await,
+      )
+      .await
+  }
+}
+
+// ----------------------------------------Module Level Methods------------------------------------
+impl<D, T, S> Showbiz<D, T, S>
+where
+  T: Transport,
+  S: Spawner,
+  D: Delegate,
+{
+  pub(super) async fn raw_send_msg_stream(
+    &self,
+    conn: &mut ReliableConnection<T>,
+    label: &[u8],
+    mut buf: Bytes,
+    addr: &NodeId,
+    encryption_enabled: bool,
+  ) -> Result<(), Error<D, T>> {
+    // Check if compression is enabled
+    if !self.inner.opts.compression_algo.is_none() {
+      buf = match compress_payload(self.inner.opts.compression_algo, &buf) {
+        Ok(buf) => buf.into(),
+        Err(e) => {
+          tracing::error!(target = "showbiz", err=%e, remote_node = %addr, "failed to compress payload");
+          return Err(e.into());
+        }
+      }
     }
 
-    if self.inner.opts.label.ne(&stream_label) {
-      tracing::error!(target = "showbiz", remote_node = ?addr, "discarding stream with unacceptable label: {:?}", self.inner.opts.label.as_ref());
-      return;
-    }
-
-    let encryption_enabled = if let Some(keyring) = &self.inner.keyring {
-      keyring.lock().await.is_empty()
-    } else {
-      false
-    };
-
-    let (data, mt) = match Self::read_stream(
-      &mut conn,
-      &stream_label,
-      encryption_enabled,
-      self.inner.keyring.as_ref(),
-      &self.inner.opts,
-      &self.inner.metrics_labels,
-    )
-    .await
-    {
-      Ok((mt, lr)) => (mt, lr),
-      Err(e) => match e {
-        Error::Transport(TransportError::Connection(err)) => {
-          if err.error.kind() != std::io::ErrorKind::UnexpectedEof {
-            tracing::error!(target = "showbiz", err=%err, remote_node = ?addr, "failed to receive");
-          }
-
-          let err_resp = ErrorResponse::new(err);
-          let mut out = BytesMut::with_capacity(MessageType::SIZE + err_resp.encoded_len());
-          out.put_u8(MessageType::ErrorResponse as u8);
-          err_resp.encode_to(&mut out);
-
-          if let Err(e) = self
-            .raw_send_msg_stream(
-              &mut conn,
-              &stream_label,
-              out.freeze(),
-              &addr,
-              encryption_enabled,
-            )
-            .await
+    // Check if encryption is enabled
+    if encryption_enabled && self.inner.opts.gossip_verify_outgoing {
+      match Self::encrypt_local_state(
+        self.inner.keyring.as_ref().unwrap(),
+        &buf,
+        label,
+        self.inner.opts.encryption_algo,
+      )
+      .await
+      {
+        // Write out the entire send buffer
+        Ok(crypt) => {
+          #[cfg(feature = "metrics")]
           {
-            tracing::error!(target = "showbiz", err=%e, remote_node = ?addr, "failed to send error response");
-            return;
+            incr_tcp_sent_counter(crypt.len() as u64, self.inner.metrics_labels.iter());
           }
-          return;
+
+          conn.write_all(&crypt).await.map_err(Error::transport)
         }
-        e => {
-          tracing::error!(target = "showbiz", err=%e, remote_node = ?addr, "failed to receive");
-          return;
-        }
-      },
-    };
-
-    match mt {
-      MessageType::Ping => {
-        let ping = if let Some(mut data) = data {
-          match Ping::decode_len(&mut data) {
-            Ok(len) => {
-              if len > data.len() {
-                tracing::error!(target = "showbiz", remote_node = %addr, "failed to decode ping");
-                return;
-              }
-
-              match Ping::decode_from(data.split_to(len)) {
-                Ok(ping) => ping,
-                Err(e) => {
-                  tracing::error!(target = "showbiz", err=%e, remote_node = %addr, "failed to decode ping");
-                  return;
-                }
-              }
-            }
-            Err(e) => {
-              tracing::error!(target = "showbiz", err=%e, remote_node = %addr, "failed to decode ping");
-              return;
-            }
-          }
-        } else {
-          match conn.read_u32_varint().await {
-            Ok(len) => {
-              let mut buf = vec![0; len as usize];
-              match conn.read_exact(&mut buf).await {
-                Ok(_) => match Ping::decode_from(buf.into()) {
-                  Ok(ping) => ping,
-                  Err(e) => {
-                    tracing::error!(target = "showbiz", err=%e, remote_node = %addr, "failed to decode ping");
-                    return;
-                  }
-                },
-                Err(e) => {
-                  tracing::error!(target = "showbiz", err=%e, remote_node = %addr, "failed to decode ping");
-                  return;
-                }
-              }
-            }
-            Err(e) => {
-              tracing::error!(target = "showbiz", err=%e, remote_node = %addr, "failed to decode ping");
-              return;
-            }
-          }
-        };
-
-        if &ping.target != &self.inner.id {
-          tracing::error!(target = "showbiz", local= %self.inner.id, remote = %addr, "got ping for unexpected node {}", ping.target);
-          return;
-        }
-
-        let ack = AckResponse::empty(ping.seq_no);
-        let mut out = BytesMut::with_capacity(MessageType::SIZE + ack.encoded_len());
-        out.put_u8(MessageType::AckResponse as u8);
-        ack.encode_to::<T::Checksumer>(&mut out);
-
-        if let Err(e) = self
-          .raw_send_msg_stream(
-            &mut conn,
-            &stream_label,
-            out.freeze(),
-            &addr,
-            encryption_enabled,
-          )
-          .await
-        {
-          tracing::error!(target = "showbiz", err=%e, remote_node = %addr, "failed to send ack response");
+        Err(e) => {
+          tracing::error!(target = "showbiz", err=%e, remote_node = ?addr, "failed to encrypt local state");
+          Err(e)
         }
       }
-      MessageType::User => self.read_user_msg(conn, data, &addr).await,
-      MessageType::PushPull => {
-        // Increment counter of pending push/pulls
-        let num_concurrent = self.inner.hot.push_pull_req.fetch_add(1, Ordering::SeqCst);
-        scopeguard::defer! {
-          self.inner.hot.push_pull_req.fetch_sub(1, Ordering::SeqCst);
-        }
-
-        // Check if we have too many open push/pull requests
-        if num_concurrent >= MAX_PUSH_PULL_REQUESTS {
-          tracing::error!(target = "showbiz", "too many pending push/pull requests");
-          return;
-        }
-
-        let node_state = match self.read_remote_state(&mut conn, data).await {
-          Ok(ns) => ns,
-          Err(e) => {
-            tracing::error!(target = "showbiz", err=%e, remote_node = ?addr, "failed to read remote state");
-            return;
-          }
-        };
-
-        if let Err(e) = self
-          .send_local_state(
-            &mut conn,
-            &addr,
-            encryption_enabled,
-            node_state.join,
-            &stream_label,
-          )
-          .await
-        {
-          tracing::error!(target = "showbiz", err=%e, remote_node = ?addr, "failed to push local state");
-          return;
-        }
-
-        if let Err(e) = self.merge_remote_state(node_state).await {
-          tracing::error!(target = "showbiz", err=%e, remote_node = ?addr, "failed to push/pull merge");
-        }
+    } else {
+      // Write out the entire send buffer
+      #[cfg(feature = "metrics")]
+      {
+        incr_tcp_sent_counter(buf.len() as u64, self.inner.metrics_labels.iter());
       }
-      mt => {
-        tracing::error!(target = "showbiz", remote_node = ?addr, "received invalid msg type {}", mt);
-      }
+
+      conn.write_all(&buf).await.map_err(Error::transport)
     }
   }
 
@@ -445,177 +374,6 @@ where
       .await
   }
 
-  /// Used to merge the remote state with our local state
-  pub(crate) async fn merge_remote_state(
-    &self,
-    node_state: RemoteNodeState,
-  ) -> Result<(), Error<D, T>> {
-    self.verify_protocol(&node_state.push_states).await?;
-
-    // Invoke the merge delegate if any
-    if node_state.join {
-      if let Some(merge) = self.inner.delegate.as_ref() {
-        let peers = node_state
-          .push_states
-          .iter()
-          .map(|n| Node {
-            id: NodeId::from_addr(n.node.addr.clone()).set_name(n.node.name.clone()),
-            meta: n.meta.clone(),
-            state: n.state,
-            pmin: n.pmin(),
-            pmax: n.pmax(),
-            pcur: n.pcur(),
-            dmin: n.dmin(),
-            dmax: n.dmax(),
-            dcur: n.dcur(),
-          })
-          .collect::<Vec<_>>();
-        merge.notify_merge(peers).await.map_err(Error::delegate)?;
-      }
-    }
-
-    // Merge the membership state
-    self.merge_state(node_state.push_states).await?;
-
-    // Invoke the delegate for user state
-    if let Some(d) = &self.inner.delegate {
-      if !node_state.user_state.is_empty() {
-        d.merge_remote_state(node_state.user_state, node_state.join)
-          .await
-          .map_err(Error::delegate)?;
-      }
-    }
-    Ok(())
-  }
-
-  async fn read_user_msg(
-    &self,
-    mut conn: ReliableConnection<T>,
-    data: Option<Bytes>,
-    addr: &NodeId,
-  ) {
-    match data {
-      Some(mut data) => {
-        let user_msg_len = data.get_u32() as usize;
-        let remaining = data.remaining();
-        let user_msg = match user_msg_len.cmp(&remaining) {
-          std::cmp::Ordering::Less => {
-            tracing::error!(target = "showbiz", remote_node = %addr, "failed to read full user message ({} / {})", remaining, user_msg_len);
-            return;
-          }
-          std::cmp::Ordering::Equal => data,
-          std::cmp::Ordering::Greater => data.slice(..user_msg_len),
-        };
-
-        if let Some(d) = &self.inner.delegate {
-          if let Err(e) = d.notify_user_msg(user_msg).await {
-            tracing::error!(target = "showbiz", err=%e, remote_node = %addr, "failed to notify user message");
-          }
-        }
-      }
-      None => {
-        let mut user_msg_len = [0u8; 4];
-        if let Err(e) = conn.read_exact(&mut user_msg_len).await {
-          tracing::error!(target = "showbiz", err=%e, remote_node = ?addr, "failed to receive user message");
-          return;
-        }
-        let user_msg_len = u32::from_be_bytes(user_msg_len) as usize;
-        if user_msg_len > 0 {
-          let mut user_msg = vec![0; user_msg_len];
-          if let Err(e) = conn.read_exact(&mut user_msg).await {
-            tracing::error!(target = "showbiz", err=%e, remote_node = ?addr, "failed to receive user message");
-            return;
-          }
-          if let Some(d) = &self.inner.delegate {
-            if let Err(e) = d.notify_user_msg(user_msg.into()).await {
-              tracing::error!(target = "showbiz", err=%e, remote_node = ?addr, "failed to notify user message");
-            }
-          }
-        }
-      }
-    }
-  }
-
-  pub(crate) async fn send_user_msg(
-    &self,
-    addr: &NodeId,
-    msg: crate::types::Message,
-  ) -> Result<(), Error<D, T>> {
-    if addr.name().is_empty() && self.inner.opts.require_node_names {
-      return Err(Error::MissingNodeName);
-    }
-    let mut conn = self
-      .inner
-      .transport
-      .dial_address_timeout(addr, self.inner.opts.tcp_timeout)
-      .await
-      .map_err(Error::transport)?;
-
-    self
-      .raw_send_msg_stream(
-        &mut conn,
-        &self.inner.opts.label,
-        msg.freeze(),
-        addr,
-        self.encryption_enabled().await,
-      )
-      .await
-  }
-
-  pub(super) async fn raw_send_msg_stream(
-    &self,
-    conn: &mut ReliableConnection<T>,
-    label: &[u8],
-    mut buf: Bytes,
-    addr: &NodeId,
-    encryption_enabled: bool,
-  ) -> Result<(), Error<D, T>> {
-    // Check if compression is enabled
-    if !self.inner.opts.compression_algo.is_none() {
-      buf = match compress_payload(self.inner.opts.compression_algo, &buf) {
-        Ok(buf) => buf.into(),
-        Err(e) => {
-          tracing::error!(target = "showbiz", err=%e, remote_node = %addr, "failed to compress payload");
-          return Err(e.into());
-        }
-      }
-    }
-
-    // Check if encryption is enabled
-    if encryption_enabled && self.inner.opts.gossip_verify_outgoing {
-      match Self::encrypt_local_state(
-        self.inner.keyring.as_ref().unwrap(),
-        &buf,
-        label,
-        self.inner.opts.encryption_algo,
-      )
-      .await
-      {
-        // Write out the entire send buffer
-        Ok(crypt) => {
-          #[cfg(feature = "metrics")]
-          {
-            incr_tcp_sent_counter(crypt.len() as u64, self.inner.metrics_labels.iter());
-          }
-
-          conn.write_all(&crypt).await.map_err(Error::transport)
-        }
-        Err(e) => {
-          tracing::error!(target = "showbiz", err=%e, remote_node = ?addr, "failed to encrypt local state");
-          Err(e)
-        }
-      }
-    } else {
-      // Write out the entire send buffer
-      #[cfg(feature = "metrics")]
-      {
-        incr_tcp_sent_counter(buf.len() as u64, self.inner.metrics_labels.iter());
-      }
-
-      conn.write_all(&buf).await.map_err(Error::transport)
-    }
-  }
-
   /// Used to read messages from a stream connection, decrypting and
   /// decompressing the stream if necessary.
   ///
@@ -736,5 +494,264 @@ where
     }
 
     Ok((None, mt))
+  }
+}
+
+// -----------------------------------------Private Level Methods-----------------------------------
+impl<D, T, S> Showbiz<D, T, S>
+where
+  T: Transport,
+  S: Spawner,
+  D: Delegate,
+{
+  /// Handles a single incoming stream connection from the transport.
+  async fn handle_conn(self, mut conn: ReliableConnection<T>) {
+    let addr = conn.remote_node().clone();
+    tracing::debug!(target = "showbiz", remote_node = %addr, "stream connection");
+
+    #[cfg(feature = "metrics")]
+    {
+      incr_tcp_accept_counter(self.inner.metrics_labels.iter());
+    }
+
+    if self.inner.opts.tcp_timeout != Duration::ZERO {
+      conn.set_timeout(Some(self.inner.opts.tcp_timeout));
+    }
+
+    let mut stream_label = match conn.remove_label_header().await {
+      Ok(label) => label,
+      Err(e) => {
+        tracing::error!(target = "showbiz", err = %e, remote_node = ?addr, "failed to remove label header");
+        return;
+      }
+    };
+
+    if self.inner.opts.skip_inbound_label_check {
+      if !stream_label.is_empty() {
+        tracing::error!(target = "showbiz", remote_node = ?addr, "unexpected double stream label header");
+        return;
+      }
+      // Set this from config so that the auth data assertions work below
+      stream_label = self.inner.opts.label.clone();
+    }
+
+    if self.inner.opts.label.ne(&stream_label) {
+      tracing::error!(target = "showbiz", remote_node = ?addr, "discarding stream with unacceptable label: {:?}", self.inner.opts.label.as_ref());
+      return;
+    }
+
+    let encryption_enabled = if let Some(keyring) = &self.inner.keyring {
+      keyring.lock().await.is_empty()
+    } else {
+      false
+    };
+
+    let (data, mt) = match Self::read_stream(
+      &mut conn,
+      &stream_label,
+      encryption_enabled,
+      self.inner.keyring.as_ref(),
+      &self.inner.opts,
+      &self.inner.metrics_labels,
+    )
+    .await
+    {
+      Ok((mt, lr)) => (mt, lr),
+      Err(e) => match e {
+        Error::Transport(TransportError::Connection(err)) => {
+          if err.error.kind() != std::io::ErrorKind::UnexpectedEof {
+            tracing::error!(target = "showbiz", err=%err, remote_node = ?addr, "failed to receive");
+          }
+
+          let err_resp = ErrorResponse::new(err);
+          let mut out = BytesMut::with_capacity(MessageType::SIZE + err_resp.encoded_len());
+          out.put_u8(MessageType::ErrorResponse as u8);
+          err_resp.encode_to(&mut out);
+
+          if let Err(e) = self
+            .raw_send_msg_stream(
+              &mut conn,
+              &stream_label,
+              out.freeze(),
+              &addr,
+              encryption_enabled,
+            )
+            .await
+          {
+            tracing::error!(target = "showbiz", err=%e, remote_node = ?addr, "failed to send error response");
+            return;
+          }
+          return;
+        }
+        e => {
+          tracing::error!(target = "showbiz", err=%e, remote_node = ?addr, "failed to receive");
+          return;
+        }
+      },
+    };
+
+    match mt {
+      MessageType::Ping => {
+        let ping = if let Some(mut data) = data {
+          match Ping::decode_len(&mut data) {
+            Ok(len) => {
+              if len > data.len() {
+                tracing::error!(target = "showbiz", remote_node = %addr, "failed to decode ping");
+                return;
+              }
+
+              match Ping::decode_from(data.split_to(len)) {
+                Ok(ping) => ping,
+                Err(e) => {
+                  tracing::error!(target = "showbiz", err=%e, remote_node = %addr, "failed to decode ping");
+                  return;
+                }
+              }
+            }
+            Err(e) => {
+              tracing::error!(target = "showbiz", err=%e, remote_node = %addr, "failed to decode ping");
+              return;
+            }
+          }
+        } else {
+          match conn.read_u32_varint().await {
+            Ok(len) => {
+              let mut buf = vec![0; len as usize];
+              match conn.read_exact(&mut buf).await {
+                Ok(_) => match Ping::decode_from(buf.into()) {
+                  Ok(ping) => ping,
+                  Err(e) => {
+                    tracing::error!(target = "showbiz", err=%e, remote_node = %addr, "failed to decode ping");
+                    return;
+                  }
+                },
+                Err(e) => {
+                  tracing::error!(target = "showbiz", err=%e, remote_node = %addr, "failed to decode ping");
+                  return;
+                }
+              }
+            }
+            Err(e) => {
+              tracing::error!(target = "showbiz", err=%e, remote_node = %addr, "failed to decode ping");
+              return;
+            }
+          }
+        };
+
+        if &ping.target != &self.inner.id {
+          tracing::error!(target = "showbiz", local= %self.inner.id, remote = %addr, "got ping for unexpected node {}", ping.target);
+          return;
+        }
+
+        let ack = AckResponse::empty(ping.seq_no);
+        let mut out = BytesMut::with_capacity(MessageType::SIZE + ack.encoded_len());
+        out.put_u8(MessageType::AckResponse as u8);
+        ack.encode_to::<T::Checksumer>(&mut out);
+
+        if let Err(e) = self
+          .raw_send_msg_stream(
+            &mut conn,
+            &stream_label,
+            out.freeze(),
+            &addr,
+            encryption_enabled,
+          )
+          .await
+        {
+          tracing::error!(target = "showbiz", err=%e, remote_node = %addr, "failed to send ack response");
+        }
+      }
+      MessageType::User => self.read_user_msg(conn, data, &addr).await,
+      MessageType::PushPull => {
+        // Increment counter of pending push/pulls
+        let num_concurrent = self.inner.hot.push_pull_req.fetch_add(1, Ordering::SeqCst);
+        scopeguard::defer! {
+          self.inner.hot.push_pull_req.fetch_sub(1, Ordering::SeqCst);
+        }
+
+        // Check if we have too many open push/pull requests
+        if num_concurrent >= MAX_PUSH_PULL_REQUESTS {
+          tracing::error!(target = "showbiz", "too many pending push/pull requests");
+          return;
+        }
+
+        let node_state = match self.read_remote_state(&mut conn, data).await {
+          Ok(ns) => ns,
+          Err(e) => {
+            tracing::error!(target = "showbiz", err=%e, remote_node = ?addr, "failed to read remote state");
+            return;
+          }
+        };
+
+        if let Err(e) = self
+          .send_local_state(
+            &mut conn,
+            &addr,
+            encryption_enabled,
+            node_state.join,
+            &stream_label,
+          )
+          .await
+        {
+          tracing::error!(target = "showbiz", err=%e, remote_node = ?addr, "failed to push local state");
+          return;
+        }
+
+        if let Err(e) = self.merge_remote_state(node_state).await {
+          tracing::error!(target = "showbiz", err=%e, remote_node = ?addr, "failed to push/pull merge");
+        }
+      }
+      mt => {
+        tracing::error!(target = "showbiz", remote_node = ?addr, "received invalid msg type {}", mt);
+      }
+    }
+  }
+
+  async fn read_user_msg(
+    &self,
+    mut conn: ReliableConnection<T>,
+    data: Option<Bytes>,
+    addr: &NodeId,
+  ) {
+    match data {
+      Some(mut data) => {
+        let user_msg_len = data.get_u32() as usize;
+        let remaining = data.remaining();
+        let user_msg = match user_msg_len.cmp(&remaining) {
+          std::cmp::Ordering::Less => {
+            tracing::error!(target = "showbiz", remote_node = %addr, "failed to read full user message ({} / {})", remaining, user_msg_len);
+            return;
+          }
+          std::cmp::Ordering::Equal => data,
+          std::cmp::Ordering::Greater => data.slice(..user_msg_len),
+        };
+
+        if let Some(d) = &self.inner.delegate {
+          if let Err(e) = d.notify_user_msg(user_msg).await {
+            tracing::error!(target = "showbiz", err=%e, remote_node = %addr, "failed to notify user message");
+          }
+        }
+      }
+      None => {
+        let mut user_msg_len = [0u8; 4];
+        if let Err(e) = conn.read_exact(&mut user_msg_len).await {
+          tracing::error!(target = "showbiz", err=%e, remote_node = ?addr, "failed to receive user message");
+          return;
+        }
+        let user_msg_len = u32::from_be_bytes(user_msg_len) as usize;
+        if user_msg_len > 0 {
+          let mut user_msg = vec![0; user_msg_len];
+          if let Err(e) = conn.read_exact(&mut user_msg).await {
+            tracing::error!(target = "showbiz", err=%e, remote_node = ?addr, "failed to receive user message");
+            return;
+          }
+          if let Some(d) = &self.inner.delegate {
+            if let Err(e) = d.notify_user_msg(user_msg.into()).await {
+              tracing::error!(target = "showbiz", err=%e, remote_node = ?addr, "failed to notify user message");
+            }
+          }
+        }
+      }
+    }
   }
 }

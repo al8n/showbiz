@@ -1,4 +1,4 @@
-use std::{net::ToSocketAddrs, sync::atomic::Ordering, time::Duration};
+use std::{future::Future, net::ToSocketAddrs, sync::atomic::Ordering, time::Duration};
 
 use crate::{dns::AsyncRuntimeProvider, types::Dead};
 

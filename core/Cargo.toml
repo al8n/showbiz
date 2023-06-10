@@ -8,7 +8,7 @@ edition = { workspace= true }
 
 [features]
 default = ["async", "metrics"]
-async = ["async-channel", "async-trait", "async-lock", "futures-timer", "futures-util", "futures-channel", "futures-io", "pin-project-lite", "weezl/async"]
+async = ["async-io", "async-channel", "async-trait", "async-lock", "futures-timer", "futures-util", "futures-channel", "pin-project-lite", "weezl/async"]
 # sync = ["crossbeam-channel", "showbiz-traits/sync", "parking_lot"]
 
 metrics = ["dep:metrics"]
@@ -28,6 +28,7 @@ crossbeam-channel = { version = "0.5", optional = true }
 parking_lot = { version = "0.12", optional = true }
 
 # async common
+async-io = { version = "1.12", optional = true }
 async-channel = { version = "1.8", optional = true }
 async-lock = { version = "2.7", optional = true }
 async-recursion = { version = "1", optional = true }
@@ -35,7 +36,6 @@ async-trait = { version = "0.1", optional = true }
 futures-timer = { version = "3", optional = true }
 futures-channel = { version = "0.3", optional = true }
 futures-util = { version = "0.3", optional = true, features = ["io"] }
-futures-io = { version = "0.3", optional = true }
 pin-project-lite = { version = "0.2", optional = true }
 
 # common
@@ -48,6 +48,8 @@ crossbeam-utils = "0.8"
 indexmap = { version = "1.9", features = ["serde-1"] }
 ipnet = { version = "2.7", features = ["serde"] }
 metrics = { version = "0.20", optional = true }
+# TODO: remove this dependency when Rust's ident concat macro stable
+paste = "1"
 prost = { version = "0.11" }
 rand = { version = "0.8" }
 scopeguard = "1.1"
