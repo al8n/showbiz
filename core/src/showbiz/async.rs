@@ -15,7 +15,7 @@ where
 {
   pub async fn finalize<S>(self, spawner: S) -> Result<Showbiz<D, T, S>, Error<D, T>>
   where
-    S: Fn(BoxFuture<'static, ()>) + Send + Sync + 'static + Copy + Unpin,
+    S: Spawner,
   {
     let Self {
       opts,
@@ -118,7 +118,7 @@ where
               dcur: vsn[5],
               state: NodeState::Dead,
             }),
-            incarnation: 0,
+            incarnation: Arc::new(AtomicU32::new(0)),
             state: NodeState::Dead,
             state_change: Instant::now(),
           },
@@ -142,16 +142,25 @@ pub(crate) struct AckHandler {
 }
 
 #[cfg(feature = "async")]
-pub trait Spawner: Copy + Send + Sync + 'static {
-  fn spawn(&self, future: BoxFuture<'static, ()>);
+pub trait Spawner: Copy + Unpin + Send + Sync + 'static {
+  fn spawn<F>(&self, future: F)
+  where
+    F::Output: Send + 'static,
+    F: Future + Send + 'static;
 }
 
-#[cfg(feature = "async")]
-impl<R: Send + Sync + 'static, F: Fn(BoxFuture<'static, ()>) -> R + Send + Sync + 'static + Copy>
-  Spawner for F
-{
-  fn spawn(&self, future: BoxFuture<'static, ()>) {
-    self(future);
+#[derive(Debug, Copy, Clone)]
+#[cfg(test)]
+pub struct TestSpawner;
+
+#[cfg(test)]
+impl Spawner for TestSpawner {
+  fn spawn<F>(&self, future: F)
+  where
+    F::Output: Send + 'static,
+    F: Future + Send + 'static,
+  {
+    tokio::spawn(future);
   }
 }
 
@@ -175,9 +184,9 @@ pub(crate) struct ShowbizCore<D: Delegate, T: Transport, S: Spawner> {
   handoff_tx: Sender<()>,
   handoff_rx: Receiver<()>,
   queue: Mutex<MessageQueue>,
-  nodes: Arc<RwLock<Memberlist>>,
+  nodes: Arc<RwLock<Memberlist<S>>>,
   ack_handlers: Arc<Mutex<HashMap<u32, AckHandler>>>,
-  dns: Option<DNS<T>>,
+  dns: Option<DNS<T, S>>,
   metrics_labels: Arc<Vec<metrics::Label>>,
   spawner: S,
 }
@@ -271,14 +280,14 @@ where
       self.inner.hot.leave.fetch_add(1, Ordering::SeqCst);
 
       let mut memberlist = self.inner.nodes.write().await;
-      if let Some(state) = memberlist.node_map.get(memberlist.local.state.id()) {
+      if let Some(state) = memberlist.node_map.get(memberlist.local.state.id().name()) {
         // This dead message is special, because Node and From are the
         // same. This helps other nodes figure out that a node left
         // intentionally. When Node equals From, other nodes know for
         // sure this node is gone.
 
         let d = Dead {
-          incarnation: state.state.incarnation,
+          incarnation: state.state.incarnation.load(Ordering::Relaxed),
           node: state.state.node.id.clone(),
           from: state.state.node.id.clone(),
         };
@@ -414,19 +423,19 @@ where
       meta,
       vsn: self.inner.opts.build_vsn_array(),
     };
-    let (notify_tx, notify_rx) = channel();
-    self.alive_node(alive, Some(notify_tx), true).await?;
+    let (notify_tx, notify_rx) = async_channel::bounded(1);
+    self.alive_node(alive, Some(notify_tx), true).await;
 
     // Wait for the broadcast or a timeout
     if self.any_alive().await {
       if timeout > Duration::ZERO {
         futures_util::select_biased! {
-          _ = notify_rx.fuse() => {},
+          _ = notify_rx.recv().fuse() => {},
           _ = Delay::new(timeout).fuse() => return Err(Error::UpdateTimeout),
         }
       } else {
         futures_util::select! {
-          _ = notify_rx.fuse() => {},
+          _ = notify_rx.recv().fuse() => {},
         }
       }
     }
@@ -490,9 +499,9 @@ where
 // private impelementation
 impl<D, T, S> Showbiz<D, T, S>
 where
+  D: Delegate,
   T: Transport,
   S: Spawner,
-  D: Delegate,
 {
   /// a helper to initiate a TCP-based DNS lookup for the given host.
   /// The built-in Go resolver will do a UDP lookup first, and will only use TCP if
@@ -502,7 +511,7 @@ where
   /// to do this rather expensive operation.
   pub(crate) async fn tcp_lookup_ip(
     &self,
-    dns: &DNS<T>,
+    dns: &DNS<T, S>,
     host: &str,
     default_port: u16,
     node_name: &Name,

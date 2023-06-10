@@ -22,8 +22,7 @@ where
     let this = self.clone();
     let shutdown_rx = this.inner.shutdown_rx.clone();
     let transport_rx = this.inner.transport.packet().clone();
-    let spawner = self.inner.spawner;
-    spawner.spawn(Box::pin(async move {
+    self.inner.spawner.spawn(async move {
       loop {
         futures_util::select! {
           _ = shutdown_rx.recv().fuse() => {
@@ -37,7 +36,7 @@ where
           }
         }
       }
-    }));
+    });
   }
 
   async fn ingest_packet(&self, packet: Packet) {
@@ -216,18 +215,26 @@ where
   async fn handle_compressed(&self, mut buf: Bytes, from: SocketAddr, timestamp: Instant) {
     // Try to decode the payload
     if !self.inner.opts.compression_algo.is_none() {
-      let algo = match CompressionAlgo::try_from(buf.get_u8()) {
-        Ok(algo) => algo,
+      let size = match Compress::decode_len(&mut buf) {
+        Ok(len) => len as usize,
         Err(e) => {
-          tracing::error!(target = "showbiz", addr = %from, err = %e, "failed to decode compression algorithm");
+          tracing::error!(target = "showbiz", remote = %from, err = %e, "failed to decode compressed message");
           return;
         }
       };
-      let size = buf.get_u32() as usize;
-      match decompress_payload(algo, &buf) {
+
+      let compress = match Compress::decode_from::<T::Checksumer>(buf.split_to(size)) {
+        Ok(compress) => compress,
+        Err(e) => {
+          tracing::error!(target = "showbiz", remote = %from, err = %e, "failed to decode compressed message");
+          return;
+        }
+      };
+
+      match decompress_payload(compress.algo, &compress.buf) {
         Ok(payload) => self.handle_command(payload.into(), from, timestamp).await,
         Err(e) => {
-          tracing::error!(target = "showbiz", addr = %from, err = %e, "failed to decompress payload");
+          tracing::error!(target = "showbiz", remote = %from, err = %e, "failed to decompress payload");
         }
       }
     } else {
@@ -369,8 +376,7 @@ where
             // We've received an ack, so we can cancel the nack.
           }
         }
-      }
-      .boxed(),
+      },
     );
   }
 

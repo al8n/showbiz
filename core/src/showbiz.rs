@@ -173,22 +173,22 @@ impl MessageQueue {
 }
 
 #[viewit::viewit]
-pub(crate) struct Member {
+pub(crate) struct Member<S: Spawner> {
   state: LocalNodeState,
-  suspicion: Option<Suspicion>,
+  suspicion: Option<Suspicion<S>>,
 }
 
 #[viewit::viewit]
-pub(crate) struct Memberlist {
+pub(crate) struct Memberlist<S: Spawner> {
   /// self
-  local: Member,
+  local: Member<S>,
   /// remote nodes
   nodes: Vec<LocalNodeState>,
-  node_map: HashMap<NodeId, Member>,
+  node_map: HashMap<Name, Member<S>>,
 }
 
-impl Memberlist {
-  fn new(local: Member) -> Self {
+impl<S: Spawner> Memberlist<S> {
+  fn new(local: Member<S>) -> Self {
     Self {
       local,
       nodes: Vec::new(),

@@ -80,11 +80,11 @@ pub trait Delegate: Send + Sync + 'static {
 
   /// Invoked when a node is detected to have joined the cluster
   #[cfg(not(feature = "async"))]
-  fn notify_join(&self, node: &Node) -> Result<(), Self::Error>;
+  fn notify_join(&self, node: Arc<Node>) -> Result<(), Self::Error>;
 
   /// Invoked when a node is detected to have joined the cluster
   #[cfg(feature = "async")]
-  async fn notify_join(&self, node: &Node) -> Result<(), Self::Error>;
+  async fn notify_join(&self, node: Arc<Node>) -> Result<(), Self::Error>;
 
   /// Invoked when a node is detected to have left the cluster
   #[cfg(not(feature = "async"))]
@@ -97,28 +97,29 @@ pub trait Delegate: Send + Sync + 'static {
   /// Invoked when a node is detected to have
   /// updated, usually involving the meta data.
   #[cfg(not(feature = "async"))]
-  fn notify_update(&self, node: &Node) -> Result<(), Self::Error>;
+  fn notify_update(&self, node: Arc<Node>) -> Result<(), Self::Error>;
 
   /// Invoked when a node is detected to have
   /// updated, usually involving the meta data.
   #[cfg(feature = "async")]
-  async fn notify_update(&self, node: &Node) -> Result<(), Self::Error>;
+  async fn notify_update(&self, node: Arc<Node>) -> Result<(), Self::Error>;
 
   /// Invoked when a name conflict is detected
   #[cfg(not(feature = "async"))]
-  fn notify_alive(&self, peer: &Node) -> Result<(), Self::Error>;
+  fn notify_alive(&self, peer: Arc<Node>) -> Result<(), Self::Error>;
 
   /// Invoked when a name conflict is detected
   #[cfg(feature = "async")]
-  async fn notify_alive(&self, peer: &Node) -> Result<(), Self::Error>;
+  async fn notify_alive(&self, peer: Arc<Node>) -> Result<(), Self::Error>;
 
   /// Invoked when a name conflict is detected
   #[cfg(not(feature = "async"))]
-  fn notify_conflict(&self, existing: bool, other: &Node) -> Result<(), Self::Error>;
+  fn notify_conflict(&self, existing: Arc<Node>, other: Arc<Node>) -> Result<(), Self::Error>;
 
   /// Invoked when a name conflict is detected
   #[cfg(feature = "async")]
-  async fn notify_conflict(&self, existing: bool, other: &Node) -> Result<(), Self::Error>;
+  async fn notify_conflict(&self, existing: Arc<Node>, other: Arc<Node>)
+    -> Result<(), Self::Error>;
 
   /// Invoked when a merge could take place.
   /// Provides a list of the nodes known by the peer.
@@ -274,13 +275,13 @@ impl Delegate for VoidDelegate {
 
   /// Invoked when a node is detected to have joined the cluster
   #[cfg(not(feature = "async"))]
-  fn notify_join(&self, node: &Node) -> Result<(), Self::Error> {
+  fn notify_join(&self, node: Arc<Node>) -> Result<(), Self::Error> {
     Ok(())
   }
 
   /// Invoked when a node is detected to have joined the cluster
   #[cfg(feature = "async")]
-  async fn notify_join(&self, node: &Node) -> Result<(), Self::Error> {
+  async fn notify_join(&self, node: Arc<Node>) -> Result<(), Self::Error> {
     Ok(())
   }
 
@@ -299,38 +300,42 @@ impl Delegate for VoidDelegate {
   /// Invoked when a node is detected to have
   /// updated, usually involving the meta data.
   #[cfg(not(feature = "async"))]
-  fn notify_update(&self, node: &Node) -> Result<(), Self::Error> {
+  fn notify_update(&self, node: Arc<Node>) -> Result<(), Self::Error> {
     Ok(())
   }
 
   /// Invoked when a node is detected to have
   /// updated, usually involving the meta data.
   #[cfg(feature = "async")]
-  async fn notify_update(&self, node: &Node) -> Result<(), Self::Error> {
+  async fn notify_update(&self, node: Arc<Node>) -> Result<(), Self::Error> {
     Ok(())
   }
 
   /// Invoked when a name conflict is detected
   #[cfg(not(feature = "async"))]
-  fn notify_alive(&self, peer: &Node) -> Result<(), Self::Error> {
+  fn notify_alive(&self, peer: Arc<Node>) -> Result<(), Self::Error> {
     Ok(())
   }
 
   /// Invoked when a name conflict is detected
   #[cfg(feature = "async")]
-  async fn notify_alive(&self, peer: &Node) -> Result<(), Self::Error> {
+  async fn notify_alive(&self, peer: Arc<Node>) -> Result<(), Self::Error> {
     Ok(())
   }
 
   /// Invoked when a name conflict is detected
   #[cfg(not(feature = "async"))]
-  fn notify_conflict(&self, existing: bool, other: &Node) -> Result<(), Self::Error> {
+  fn notify_conflict(&self, existing: Arc<Node>, other: Arc<Node>) -> Result<(), Self::Error> {
     Ok(())
   }
 
   /// Invoked when a name conflict is detected
   #[cfg(feature = "async")]
-  async fn notify_conflict(&self, existing: bool, other: &Node) -> Result<(), Self::Error> {
+  async fn notify_conflict(
+    &self,
+    existing: Arc<Node>,
+    other: Arc<Node>,
+  ) -> Result<(), Self::Error> {
     Ok(())
   }
 

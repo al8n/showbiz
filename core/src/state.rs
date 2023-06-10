@@ -1,4 +1,7 @@
-use std::{sync::Arc, time::Instant};
+use std::{
+  sync::{atomic::AtomicU32, Arc},
+  time::Instant,
+};
 
 use crate::{
   showbiz::Spawner,
@@ -125,7 +128,7 @@ mod sealed_metrics {
 #[derive(Debug, Clone)]
 pub(crate) struct LocalNodeState {
   node: Arc<Node>,
-  incarnation: u32,
+  incarnation: Arc<AtomicU32>,
   state_change: Instant,
   state: NodeState,
 }

@@ -1,21 +1,21 @@
-use crate::transport::Transport;
+use crate::{showbiz::Spawner, transport::Transport};
 use futures_timer::Delay;
-use futures_util::{future::BoxFuture, select_biased, FutureExt};
-use std::{future::Future, io, marker::PhantomData, net::SocketAddr, sync::Arc, time::Duration};
+use futures_util::{select_biased, FutureExt};
+use std::{future::Future, io, marker::PhantomData, net::SocketAddr, time::Duration};
 use trust_dns_proto::Time;
 use trust_dns_resolver::{
   name_server::{RuntimeProvider, Spawn},
   AsyncResolver,
 };
 
-pub(crate) type DNS<T> = AsyncResolver<AsyncRuntimeProvider<T>>;
+pub(crate) type DNS<T, S> = AsyncResolver<AsyncRuntimeProvider<T, S>>;
 
 #[repr(transparent)]
-pub(crate) struct AsyncSpawn {
-  spawner: Arc<dyn Fn(BoxFuture<'static, ()>) + Send + Sync + 'static + Unpin>,
+pub(crate) struct AsyncSpawn<S: Spawner> {
+  spawner: S,
 }
 
-impl Clone for AsyncSpawn {
+impl<S: Spawner> Clone for AsyncSpawn<S> {
   fn clone(&self) -> Self {
     Self {
       spawner: self.spawner.clone(),
@@ -23,45 +23,43 @@ impl Clone for AsyncSpawn {
   }
 }
 
-impl Spawn for AsyncSpawn {
+impl<S: Spawner> Copy for AsyncSpawn<S> {}
+
+impl<S: Spawner> Spawn for AsyncSpawn<S> {
   fn spawn_bg<F>(&mut self, future: F)
   where
     F: Future<Output = Result<(), trust_dns_proto::error::ProtoError>> + Send + 'static,
   {
-    (self.spawner)(Box::pin(async move {
+    self.spawner.spawn(async move {
       if let Err(e) = future.await {
         tracing::error!(target = "showbiz", err = %e, "dns error");
       }
-    }));
+    });
   }
 }
 
-pub(crate) struct AsyncRuntimeProvider<T: Transport> {
-  spawner: AsyncSpawn,
+pub(crate) struct AsyncRuntimeProvider<T: Transport, S: Spawner> {
+  spawner: AsyncSpawn<S>,
   _marker: PhantomData<T>,
 }
 
-impl<T: Transport> AsyncRuntimeProvider<T> {
-  pub(crate) fn new<S>(spawner: S) -> Self
-  where
-    S: Fn(BoxFuture<'static, ()>) + Send + Sync + 'static + Unpin,
-  {
+impl<T: Transport, S: Spawner> AsyncRuntimeProvider<T, S> {
+  pub(crate) fn new(spawner: S) -> Self {
     Self {
-      spawner: AsyncSpawn {
-        spawner: Arc::new(spawner),
-      },
+      spawner: AsyncSpawn { spawner },
       _marker: PhantomData,
     }
   }
 }
 
-impl<T> Clone for AsyncRuntimeProvider<T>
+impl<T, S> Clone for AsyncRuntimeProvider<T, S>
 where
   T: Transport,
+  S: Spawner,
 {
   fn clone(&self) -> Self {
     Self {
-      spawner: self.spawner.clone(),
+      spawner: self.spawner,
       _marker: PhantomData,
     }
   }
@@ -93,8 +91,8 @@ impl Time for Timer {
   }
 }
 
-impl<T: Transport + Unpin> RuntimeProvider for AsyncRuntimeProvider<T> {
-  type Handle = AsyncSpawn;
+impl<T: Transport + Unpin, S: Spawner> RuntimeProvider for AsyncRuntimeProvider<T, S> {
+  type Handle = AsyncSpawn<S>;
 
   type Timer = Timer;
 

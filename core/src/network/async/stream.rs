@@ -17,12 +17,12 @@ where
 {
   /// A long running thread that pulls incoming streams from the
   /// transport and hands them off for processing.
-  pub(crate) fn steram_listen(&self) {
+  pub(crate) fn stream_listen(&self) {
     let this = self.clone();
     let transport_rx = this.inner.transport.stream().clone();
     let shutdown_rx = this.inner.shutdown_rx.clone();
     let spawner = self.inner.spawner;
-    spawner.spawn(Box::pin(async move {
+    spawner.spawn(async move {
       loop {
         futures_util::select! {
           _ = shutdown_rx.recv().fuse() => {
@@ -35,11 +35,11 @@ where
                 Ok(conn) => this.handle_conn(conn).await,
                 Err(e) => tracing::error!(target = "showbiz", "failed to accept connection: {}", e),
               }
-            }.boxed());
+            });
           }
         }
       }
-    }));
+    });
   }
 
   /// Used to merge the remote state with our local state
@@ -280,7 +280,7 @@ where
           let this = PushNodeState {
             node: n.id().clone(),
             meta: n.node.meta().clone(),
-            incarnation: n.incarnation,
+            incarnation: n.incarnation.load(Ordering::Relaxed),
             state: n.state,
             vsn: n.node.vsn(),
           };

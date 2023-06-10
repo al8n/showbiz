@@ -17,8 +17,7 @@ where
     let this = self.clone();
     let shutdown_rx = this.inner.shutdown_rx.clone();
     let handoff_rx = this.inner.handoff_rx.clone();
-    let spawner = self.inner.spawner;
-    spawner.spawn(Box::pin(async move {
+    self.inner.spawner.spawn(async move {
       loop {
         futures_util::select! {
           _ = shutdown_rx.recv().fuse() => {
@@ -37,7 +36,7 @@ where
           }
         }
       }
-    }));
+    });
   }
 
   /// Returns the next message to process in priority order, using LIFO
@@ -119,9 +118,7 @@ where
       .port
       .get_or_insert(self.inner.opts.bind_addr.port());
 
-    if let Err(e) = self.alive_node(alive, None, false).await {
-      tracing::error!(target = "showbiz", err=%e, remote_addr = %msg.from, "failed to alive node");
-    }
+    self.alive_node(alive, None, false).await
   }
 
   async fn handle_dead(&self, mut msg: MessageHandoff) {

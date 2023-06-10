@@ -1,4 +1,4 @@
-use std::{net::SocketAddr, sync::atomic::Ordering, time::Duration};
+use std::{collections::hash_map::Entry, net::SocketAddr, sync::atomic::Ordering, time::Duration};
 
 use crate::{
   network::{RemoteNodeState, COMPOUND_HEADER_OVERHEAD, COMPOUND_OVERHEAD},
@@ -24,7 +24,11 @@ fn random_offset(n: usize) -> usize {
   (rand::random::<u32>() % (n as u32)) as usize
 }
 
-fn random_nodes<F>(k: usize, nodes: &Memberlist, exclude: Option<F>) -> Vec<Arc<Node>>
+fn random_nodes<F, S: Spawner>(
+  k: usize,
+  nodes: &Memberlist<S>,
+  exclude: Option<F>,
+) -> Vec<Arc<Node>>
 where
   F: Fn(&LocalNodeState) -> bool,
 {
@@ -162,13 +166,13 @@ where
 
   pub(crate) async fn dead_node(
     &self,
-    memberlist: &mut Memberlist,
+    memberlist: &mut Memberlist<S>,
     d: Dead,
   ) -> Result<(), Error<D, T>> {
     let state = if d.dead_self() {
       &mut memberlist.local
     } else {
-      match memberlist.node_map.get_mut(&d.node) {
+      match memberlist.node_map.get_mut(&d.node.name) {
         Some(state) => state,
         // If we've never heard about this node before, ignore it
         None => return Ok(()),
@@ -176,7 +180,7 @@ where
     };
 
     // Ignore old incarnation numbers
-    if d.incarnation < state.state.incarnation {
+    if d.incarnation < state.state.incarnation.load(Ordering::Relaxed) {
       return Ok(());
     }
 
@@ -204,7 +208,11 @@ where
       // If we are leaving, we broadcast and wait
       let msg = d.encode_to_msg();
       self
-        .broadcast_notify(d.node.clone(), msg, self.inner.leave_broadcast_tx.clone())
+        .broadcast_notify(
+          d.node.clone(),
+          msg,
+          Some(self.inner.leave_broadcast_tx.clone()),
+        )
         .await;
     } else {
       let msg = d.encode_to_msg();
@@ -217,7 +225,10 @@ where
     }
 
     // Update the state
-    state.state.incarnation = d.incarnation;
+    state
+      .state
+      .incarnation
+      .store(d.incarnation, Ordering::Relaxed);
 
     // If the dead message was send by the node itself, mark it is left
     // instead of dead.
@@ -242,12 +253,12 @@ where
   pub(crate) async fn suspect_node(&self, s: Suspect) -> Result<(), Error<D, T>> {
     let mut mu = self.inner.nodes.write().await;
 
-    let Some(state) = mu.node_map.get_mut(&s.node) else {
+    let Some(state) = mu.node_map.get_mut(&s.node.name) else {
       return Ok(());
     };
 
     // Ignore old incarnation numbers
-    if s.incarnation < state.state.incarnation {
+    if s.incarnation < state.state.incarnation.load(Ordering::Relaxed) {
       return Ok(());
     }
 
@@ -271,7 +282,7 @@ where
 
     // If this is us we need to refute, otherwise re-broadcast
     if state.state.node.name() == &self.inner.opts.name {
-      self.refute(state, s.incarnation).await;
+      self.refute(&state.state, s.incarnation).await;
       tracing::warn!(
         target = "showbiz",
         "refuting a suspect message (from: {})",
@@ -291,7 +302,10 @@ where
     }
 
     // Update the state
-    state.state.incarnation = s.incarnation;
+    state
+      .state
+      .incarnation
+      .store(s.incarnation, Ordering::Relaxed);
     state.state.state = NodeState::Suspect;
     let change_time = Instant::now();
     state.state.state_change = change_time;
@@ -335,7 +349,7 @@ where
               .read()
               .await
               .node_map
-              .get(&n)
+              .get(&n.name)
               .and_then(|state| {
                 let timeout = state.state.state == NodeState::Suspect
                   && state.state.state_change == change_time;
@@ -374,18 +388,232 @@ where
         }
         .boxed()
       },
-      move |fut| spawner.spawn(fut),
+      spawner,
     ));
     Ok(())
   }
 
+  /// Invoked by the network layer when we get a message about a
+  /// live node.
   pub(crate) async fn alive_node(
     &self,
     alive: Alive,
-    notify_tx: Option<Sender<()>>,
+    notify_tx: Option<async_channel::Sender<()>>,
     bootstrap: bool,
-  ) -> Result<(), Error<D, T>> {
-    Ok(())
+  ) {
+    let mut memberlist = self.inner.nodes.write().await;
+    let member = memberlist.node_map.entry(alive.node.name.clone());
+
+    // It is possible that during a Leave(), there is already an aliveMsg
+    // in-queue to be processed but blocked by the locks above. If we let
+    // that aliveMsg process, it'll cause us to re-join the cluster. This
+    // ensures that we don't.
+    if self.has_left() && alive.node == self.inner.id {
+      return;
+    }
+
+    let vsn = alive.vsn;
+    let node = Arc::new(Node {
+      id: alive.node.clone(),
+      meta: alive.meta.clone(),
+      state: NodeState::Alive,
+      pmin: vsn[0],
+      pmax: vsn[1],
+      pcur: vsn[2],
+      dmin: vsn[3],
+      dmax: vsn[4],
+      dcur: vsn[5],
+    });
+    // Invoke the Alive delegate if any. This can be used to filter out
+    // alive messages based on custom logic. For example, using a cluster name.
+    // Using a merge delegate is not enough, as it is possible for passive
+    // cluster merging to still occur.
+    if let Some(delegate) = &self.inner.delegate {
+      if let Err(e) = delegate.notify_alive(node.clone()).await {
+        tracing::warn!(target = "showbiz", local = %self.inner.id, remote = %alive.node, err=%e, "ignoring alive message");
+        return;
+      }
+    }
+
+    let mut updates_node = false;
+    match member {
+      Entry::Occupied(member) => {
+        // Check if this address is different than the existing node unless the old node is dead.
+        let state = &member.get().state;
+        if state.address() != alive.node.addr() || alive.node.port != state.id().port {
+          if let Some(ip) = alive.node.addr().parse_ip() {
+            if let Err(err) = self.inner.opts.ip_allowed(ip) {
+              tracing::warn!(target = "showbiz", local = %self.inner.id, remote = %alive.node, err=%err, "rejected IP update from {} to {} for node {}", alive.node.name(), state.node.id().addr(), alive.node.addr());
+              return;
+            };
+          }
+
+          // If DeadNodeReclaimTime is configured, check if enough time has elapsed since the node died.
+          let can_reclaim = (self.inner.opts.dead_node_reclaim_time > Duration::ZERO
+            && state.state_change.elapsed() > self.inner.opts.dead_node_reclaim_time);
+
+          // Allow the address to be updated if a dead node is being replaced.
+          if state.state == NodeState::Left || (state.state == NodeState::Dead && can_reclaim) {
+            tracing::info!(target = "showbiz", local = %self.inner.id, "updating address for left or failed node {} from {} to {}", state.node.name(), state.node.id().addr(), alive.node.addr());
+            updates_node = true;
+          } else {
+            tracing::error!(target = "showbiz", local = %self.inner.id, "conflicting address for {}(mine: {}, theirs: {}, old state: {})", state.node.id().name(), state.node.id().addr(), alive.node, state.state);
+
+            // Inform the conflict delegate if provided
+            if let Some(delegate) = self.inner.delegate.as_ref() {
+              if let Err(e) = delegate
+                .notify_conflict(
+                  state.node.clone(),
+                  Arc::new(Node {
+                    id: alive.node.clone(),
+                    meta: alive.meta.clone(),
+                    state: NodeState::Alive,
+                    pmin: alive.vsn[0],
+                    pmax: alive.vsn[1],
+                    pcur: alive.vsn[2],
+                    dmin: alive.vsn[3],
+                    dmax: alive.vsn[4],
+                    dcur: alive.vsn[5],
+                  }),
+                )
+                .await
+              {
+                tracing::error!(target = "showbiz", local = %self.inner.id, err=%e, "failed to notify conflict delegate");
+              }
+            }
+            return;
+          }
+        }
+      }
+      Entry::Vacant(ent) => {
+        if let Some(ip) = alive.node.addr().parse_ip() {
+          if let Err(err) = self.inner.opts.ip_allowed(ip) {
+            tracing::warn!(target = "showbiz", local = %self.inner.id, remote = %alive.node, err=%err, "rejected node");
+            return;
+          };
+        }
+
+        let state = LocalNodeState {
+          node,
+          incarnation: Arc::new(AtomicU32::new(alive.incarnation)),
+          state_change: Instant::now(),
+          state: NodeState::Dead,
+        };
+
+        // Add to map
+        ent.insert(Member {
+          state: state.clone(),
+          suspicion: None,
+        });
+
+        // Get a random offset. This is important to ensure
+        // the failure detection bound is low on average. If all
+        // nodes did an append, failure detection bound would be
+        // very high.
+        let n = memberlist.nodes.len();
+        let offset = random_offset(n);
+
+        // Add at the end and swap with the node at the offset
+        memberlist.nodes.push(state.clone());
+        memberlist.nodes.swap(n, offset);
+
+        // Update numNodes after we've added a new node
+        self.inner.hot.num_nodes.fetch_add(1, Ordering::Relaxed);
+      }
+    }
+
+    let member = memberlist.node_map.get_mut(&alive.node.name).unwrap();
+    let local_incarnation = member.state.incarnation.load(Ordering::Relaxed);
+    // Bail if the incarnation number is older, and this is not about us
+    let is_local_node = alive.node.name == self.inner.id.name;
+    if !updates_node && !is_local_node && alive.incarnation <= local_incarnation {
+      return;
+    }
+    // Bail if strictly less and this is about us
+    if is_local_node && alive.incarnation < local_incarnation {
+      return;
+    }
+
+    // Clear out any suspicion timer that may be in effect.
+    member.suspicion = None;
+
+    // Store the old state and meta data
+    let old_state = member.state.state;
+    let old_meta = member.state.node.meta.clone();
+
+    // If this is us we need to refute, otherwise re-broadcast
+    if !bootstrap && is_local_node {
+      let versions = member.state.node.vsn();
+
+      // If the Incarnation is the same, we need special handling, since it
+      // possible for the following situation to happen:
+      // 1) Start with configuration C, join cluster
+      // 2) Hard fail / Kill / Shutdown
+      // 3) Restart with configuration C', join cluster
+      //
+      // In this case, other nodes and the local node see the same incarnation,
+      // but the values may not be the same. For this reason, we always
+      // need to do an equality check for this Incarnation. In most cases,
+      // we just ignore, but we may need to refute.
+      //
+      if alive.incarnation == local_incarnation
+        && alive.meta == member.state.node.meta
+        && alive.vsn == versions
+      {
+        return;
+      }
+      self.refute(&member.state, alive.incarnation).await;
+      tracing::warn!(target = "showbiz", local = %self.inner.id, remote = %alive.node, local_meta = ?member.state.node.meta.as_ref(), remote_meta = ?alive.meta.as_ref(), "refuting an alive message");
+    } else {
+      let mut buf = BytesMut::with_capacity(alive.encoded_len() + MessageType::SIZE);
+      buf.put_u8(MessageType::Alive as u8);
+      alive.encode_to(&mut buf);
+      self
+        .broadcast_notify(alive.node.clone(), Message(buf), notify_tx)
+        .await;
+
+      // Update the state and incarnation number
+      if updates_node {
+        member
+          .state
+          .incarnation
+          .store(alive.incarnation, Ordering::Relaxed);
+        member.state.node = Arc::new(Node {
+          id: alive.node,
+          meta: alive.meta,
+          state: NodeState::Alive,
+          pmin: todo!(),
+          pmax: todo!(),
+          pcur: todo!(),
+          dmin: todo!(),
+          dmax: todo!(),
+          dcur: todo!(),
+        });
+        if member.state.state != NodeState::Alive {
+          member.state.state = NodeState::Alive;
+          member.state.state_change = Instant::now();
+        }
+      }
+    }
+
+    // Update metrics
+    #[cfg(feature = "metrics")]
+    incr_msg_alive(self.inner.metrics_labels.iter());
+
+    // Notify the delegate of any relevant updates
+    if let Some(delegate) = &self.inner.delegate {
+      if old_state == NodeState::Dead || old_state == NodeState::Left {
+        // if Dead/Left -> Alive, notify of join
+        if let Err(e) = delegate.notify_join(member.state.node.clone()).await {
+          tracing::error!(target = "showbiz", local = %self.inner.id, err=%e, "failed to notify join");
+        }
+      } else if old_meta != member.state.node.meta {
+        // if Meta changed, trigger an update notification
+        if let Err(e) = delegate.notify_update(member.state.node.clone()).await {
+          tracing::error!(target = "showbiz", local = %self.inner.id, err=%e, "failed to notify update");
+        }
+      }
+    }
   }
 
   pub(crate) async fn merge_state(&self, remote: Vec<PushNodeState>) -> Result<(), Error<D, T>> {
@@ -398,7 +626,7 @@ where
             vsn: r.vsn,
             meta: r.meta,
           };
-          self.alive_node(alive, None, false).await?;
+          self.alive_node(alive, None, false).await;
         }
         NodeState::Left => {
           let dead = Dead {
@@ -510,7 +738,7 @@ macro_rules! bail_trigger {
               }
             }
           }
-        }.boxed());
+        });
       }
     }
   };
@@ -569,22 +797,19 @@ where
       _ = stop_rx.recv().fuse() => return,
     }
 
-    self.inner.spawner.spawn(
-      async move {
-        // Tick using a dynamic timer
-        loop {
-          let tick_time = push_pull_scale(interval, this.estimate_num_nodes() as usize);
-          let mut timer = async_io::Timer::interval(tick_time);
-          futures_util::select! {
-            _ = timer.next().fuse() => {
-              this.push_pull().await;
-            }
-            _ = stop_rx.recv().fuse() => return,
+    self.inner.spawner.spawn(async move {
+      // Tick using a dynamic timer
+      loop {
+        let tick_time = push_pull_scale(interval, this.estimate_num_nodes() as usize);
+        let mut timer = async_io::Timer::interval(tick_time);
+        futures_util::select! {
+          _ = timer.next().fuse() => {
+            this.push_pull().await;
           }
+          _ = stop_rx.recv().fuse() => return,
         }
       }
-      .boxed(),
-    );
+    });
   }
 
   // Used to perform a single round of failure detection and gossip
@@ -708,7 +933,7 @@ where
       ping.encode_to(&mut ping_buf);
 
       let suspect = Suspect {
-        incarnation: target.incarnation,
+        incarnation: target.incarnation.load(Ordering::SeqCst),
         node: target.id().clone(),
         from: self.inner.id.clone(),
       };
@@ -849,7 +1074,7 @@ where
             }
           }
         }
-      }.boxed());
+      });
     }
 
     // Wait for the acks or timeout. Note that we don't check the fallback
@@ -901,7 +1126,7 @@ where
     // No acks received from target, suspect it as failed.
     tracing::info!(target = "showbiz", local = %self.inner.id, remote = %target.id(), "suspecting has failed, no acks received");
     let s = Suspect {
-      incarnation: target.incarnation,
+      incarnation: target.incarnation.load(Ordering::SeqCst),
       node: target.id().clone(),
       from: self.inner.id.clone(),
     };
@@ -929,7 +1154,7 @@ where
     let num_remove = memberlist.nodes.len() - dead_idx;
     while i < num_remove {
       let node = memberlist.nodes.pop().unwrap();
-      memberlist.node_map.remove(node.id());
+      memberlist.node_map.remove(node.id().name());
       i += 1;
     }
 
@@ -1106,13 +1331,13 @@ where
   /// accusedInc value, or you can supply 0 to just get the next incarnation number.
   /// This alters the node state that's passed in so this MUST be called while the
   /// nodeLock is held.
-  async fn refute(&self, me: &mut Member, accused_inc: u32) {
+  async fn refute(&self, state: &LocalNodeState, accused_inc: u32) {
     // Make sure the incarnation number beats the accusation.
     let mut inc = self.next_incarnation();
     if accused_inc >= inc {
       inc = self.skip_incarnation(accused_inc - inc + 1);
     }
-    me.state.incarnation = inc;
+    state.incarnation.store(inc, Ordering::Relaxed);
 
     // Decrease our health because we are being asked to refute a problem.
     self.inner.awareness.apply_delta(1).await;
@@ -1120,15 +1345,15 @@ where
     // Format and broadcast an alive message.
     let a = Alive {
       incarnation: inc,
-      vsn: me.state.node.vsn(),
-      meta: me.state.node.meta.clone(),
-      node: me.state.node.id.clone(),
+      vsn: state.node.vsn(),
+      meta: state.node.meta.clone(),
+      node: state.node.id.clone(),
     };
 
     let mut buf = BytesMut::with_capacity(a.encoded_len() + 1);
     buf.put_u8(MessageType::Alive as u8);
     a.encode_to(&mut buf);
-    self.broadcast(me.state.node.id.clone(), Message(buf)).await;
+    self.broadcast(state.node.id.clone(), Message(buf)).await;
   }
 }
 

@@ -186,24 +186,24 @@ mod r#impl {
 
 #[cfg(feature = "async")]
 mod r#impl {
-  use crate::types::NodeId;
+  use crate::{showbiz::Spawner, types::NodeId};
 
   use super::*;
   use futures_util::{future::BoxFuture, FutureExt};
 
-  pub(crate) struct Suspicion {
+  pub(crate) struct Suspicion<S: Spawner> {
     n: Arc<AtomicU32>,
     k: u32,
     min: Duration,
     max: Duration,
     start: Instant,
-    timer: Timer,
+    timer: Timer<S>,
     timeout_fn: Arc<dyn Fn(u32) -> BoxFuture<'static, ()> + Send + Sync>,
     confirmations: HashSet<NodeId>,
-    spawner: Box<dyn Fn(BoxFuture<'static, ()>) + Send + Sync + 'static>,
+    spawner: S,
   }
 
-  impl Suspicion {
+  impl<S: Spawner> Suspicion<S> {
     /// Returns a timer started with the max time, and that will drive
     /// to the min time after seeing k or more confirmations. The from node will be
     /// excluded from confirmations since we might get our own suspicion message
@@ -215,7 +215,7 @@ mod r#impl {
       min: Duration,
       max: Duration,
       timeout_fn: impl Fn(u32) -> BoxFuture<'static, ()> + Clone + Send + Sync + 'static,
-      spawner: impl Fn(BoxFuture<'static, ()>) + Copy + Send + Sync + 'static,
+      spawner: S,
     ) -> Self {
       #[allow(clippy::mutable_key_type)]
       let confirmations = [from].into_iter().collect();
@@ -233,7 +233,7 @@ mod r#impl {
         timer,
         timeout_fn,
         confirmations,
-        spawner: Box::new(spawner),
+        spawner,
       }
     }
 
@@ -265,16 +265,16 @@ mod r#impl {
         } else {
           let n = self.n.clone();
           let f = self.timeout_fn.clone();
-          (self.spawner)(Box::pin(async move {
+          self.spawner.spawn(async move {
             f(n.load(Ordering::SeqCst)).await;
-          }));
+          });
         }
       }
       true
     }
   }
 
-  pub(super) struct Timer {
+  pub(super) struct Timer<S: Spawner> {
     n: Arc<AtomicU32>,
     timeout: Duration,
     start: Instant,
@@ -282,15 +282,15 @@ mod r#impl {
     stop_tx: async_channel::Sender<()>,
     stopped: Arc<AtomicBool>,
     f: Arc<dyn Fn(u32) -> BoxFuture<'static, ()> + Send + Sync + 'static>,
-    spawner: Box<dyn Fn(BoxFuture<'static, ()>) + Send + Sync + 'static>,
+    spawner: S,
   }
 
-  impl Timer {
+  impl<S: Spawner> Timer<S> {
     pub fn new(
       n: Arc<AtomicU32>,
       timeout: Duration,
       f: Arc<impl Fn(u32) -> BoxFuture<'static, ()> + Send + Sync + 'static>,
-      spawner: impl Fn(BoxFuture<'static, ()>) + Send + Sync + 'static,
+      spawner: S,
     ) -> Self {
       let (tx, rx) = async_channel::bounded(1);
       let stopped = Arc::new(AtomicBool::new(false));
@@ -302,7 +302,7 @@ mod r#impl {
         stop_tx: tx,
         stopped,
         f,
-        spawner: Box::new(spawner),
+        spawner,
         start: Instant::now(),
       }
     }
@@ -313,14 +313,14 @@ mod r#impl {
       let f = self.f.clone();
       let timeout = self.timeout;
 
-      (self.spawner)(Box::pin(async move {
+      self.spawner.spawn(async move {
         futures_util::select_biased! {
           _ = rx.recv().fuse() => {}
           _ = futures_timer::Delay::new(timeout).fuse() => {
             f(n.load(Ordering::SeqCst)).await
           }
         }
-      }));
+      });
     }
 
     pub async fn reset(&mut self, remaining: Duration) {
@@ -331,14 +331,14 @@ mod r#impl {
       self.timeout = remaining;
       self.start = Instant::now();
 
-      (self.spawner)(Box::pin(async move {
+      self.spawner.spawn(async move {
         futures_util::select_biased! {
           _ = rx.recv().fuse() => {}
           _ = futures_timer::Delay::new(remaining).fuse() => {
             f(n.load(Ordering::SeqCst)).await
           }
         }
-      }));
+      });
     }
 
     pub async fn stop(&self) -> bool {
@@ -559,6 +559,8 @@ mod tests {
   #[cfg(feature = "async")]
   #[tokio::test]
   async fn test_suspicion_timer() {
+    use crate::showbiz::TestSpawner;
+
     for (i, (num_confirmations, from, confirmations, expected)) in
       test_cases().into_iter().enumerate()
     {
@@ -577,9 +579,7 @@ mod tests {
         .boxed()
       };
 
-      let mut s = Suspicion::new(from.try_into().unwrap(), K, MIN, MAX, f, |x| {
-        tokio::spawn(x);
-      });
+      let mut s = Suspicion::new(from.try_into().unwrap(), K, MIN, MAX, f, TestSpawner);
       let fudge = Duration::from_millis(25);
       for p in confirmations.iter() {
         tokio::time::sleep(fudge).await;
@@ -625,6 +625,8 @@ mod tests {
   #[cfg(feature = "async")]
   #[tokio::test]
   async fn test_suspicion_timer_zero_k() {
+    use crate::showbiz::TestSpawner;
+
     let (tx, rx) = async_channel::unbounded();
     let f = move |_| {
       let tx = tx.clone();
@@ -640,9 +642,7 @@ mod tests {
       Duration::from_millis(25),
       Duration::from_secs(30),
       f,
-      |x| {
-        tokio::spawn(x);
-      },
+      TestSpawner,
     );
 
     assert!(!s.confirm("foo".try_into().unwrap()).await);
@@ -654,6 +654,8 @@ mod tests {
   #[cfg(feature = "async")]
   #[tokio::test]
   async fn test_suspicion_timer_immediate() {
+    use crate::showbiz::TestSpawner;
+
     let (tx, rx) = async_channel::unbounded();
     let f = move |_| {
       let tx = tx.clone();
@@ -669,9 +671,7 @@ mod tests {
       Duration::from_millis(100),
       Duration::from_secs(30),
       f,
-      |x| {
-        tokio::spawn(x);
-      },
+      TestSpawner,
     );
 
     tokio::time::sleep(Duration::from_millis(200)).await;

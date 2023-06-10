@@ -284,12 +284,35 @@ fn is_valid_domain_name(domain: &str) -> Result<(), InvalidDomain> {
 }
 
 /// The Address for a node, can be an ip or a domain.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Eq, Hash)]
 pub enum NodeAddress {
   /// e.g. `128.0.0.1`
   Ip(IpAddr),
   /// e.g. `www.example.com`
   Domain(Domain),
+}
+
+impl PartialEq for NodeAddress {
+  fn eq(&self, other: &Self) -> bool {
+    match (self, other) {
+      (Self::Ip(a), Self::Ip(b)) => a == b,
+      (Self::Domain(a), Self::Domain(b)) => a == b,
+      (Self::Ip(a), Self::Domain(b)) => {
+        if let Ok(addr) = b.as_str().parse::<IpAddr>() {
+          a == &addr
+        } else {
+          false
+        }
+      }
+      (Self::Domain(a), Self::Ip(b)) => {
+        if let Ok(addr) = a.as_str().parse::<IpAddr>() {
+          &addr == b
+        } else {
+          false
+        }
+      }
+    }
+  }
 }
 
 impl Default for NodeAddress {
@@ -323,6 +346,14 @@ impl NodeAddress {
     match self {
       NodeAddress::Ip(addr) => *addr,
       _ => unreachable!(),
+    }
+  }
+
+  #[inline]
+  pub(crate) fn parse_ip(&self) -> Option<IpAddr> {
+    match self {
+      Self::Ip(addr) => Some(*addr),
+      Self::Domain(addr) => addr.as_str().parse::<IpAddr>().ok(),
     }
   }
 

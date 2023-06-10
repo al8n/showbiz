@@ -102,8 +102,13 @@ impl Broadcast for ShowbizBroadcast {
 #[cfg(feature = "async")]
 impl<D: Delegate, T: Transport, S: Spawner> Showbiz<D, T, S> {
   #[inline]
-  pub(crate) async fn broadcast_notify(&self, node: NodeId, msg: Message, notify_tx: Sender<()>) {
-    let _ = self.queue_broadcast(node, msg, Some(notify_tx)).await;
+  pub(crate) async fn broadcast_notify(
+    &self,
+    node: NodeId,
+    msg: Message,
+    notify_tx: Option<Sender<()>>,
+  ) {
+    let _ = self.queue_broadcast(node, msg, notify_tx).await;
   }
 
   #[inline]
