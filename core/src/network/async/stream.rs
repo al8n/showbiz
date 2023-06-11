@@ -612,7 +612,7 @@ where
         } else {
           match conn.read_u32_varint().await {
             Ok(len) => {
-              let mut buf = vec![0; len as usize];
+              let mut buf = vec![0; len];
               match conn.read_exact(&mut buf).await {
                 Ok(_) => match Ping::decode_from(buf.into()) {
                   Ok(ping) => ping,

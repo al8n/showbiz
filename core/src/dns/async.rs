@@ -26,7 +26,7 @@ pub(crate) struct AsyncSpawn<S: Spawner> {
 impl<S: Spawner> Clone for AsyncSpawn<S> {
   fn clone(&self) -> Self {
     Self {
-      spawner: self.spawner.clone(),
+      spawner: self.spawner,
     }
   }
 }
@@ -109,7 +109,7 @@ impl<T: Transport + Unpin, S: Spawner> RuntimeProvider for AsyncRuntimeProvider<
   type Tcp = T::Connection;
 
   fn create_handle(&self) -> Self::Handle {
-    self.spawner.clone()
+    self.spawner
   }
 
   fn connect_tcp(

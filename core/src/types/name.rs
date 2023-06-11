@@ -108,10 +108,10 @@ impl<'de> Deserialize<'de> for Name {
   {
     if deserializer.is_human_readable() {
       String::deserialize(deserializer)
-        .and_then(|n| Name::try_from(n).map_err(|e| serde::de::Error::custom(e)))
+        .and_then(|n| Name::try_from(n).map_err(serde::de::Error::custom))
     } else {
       Bytes::deserialize(deserializer)
-        .and_then(|n| Name::try_from(n).map_err(|e| serde::de::Error::custom(e)))
+        .and_then(|n| Name::try_from(n).map_err(serde::de::Error::custom))
     }
   }
 }

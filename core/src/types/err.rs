@@ -57,6 +57,7 @@ impl ErrorResponse {
     let mut required = 0;
     let mut this = Self { err: String::new() };
     while buf.has_remaining() {
+      #[allow(clippy::single_match)]
       match buf.get_u8() {
         1 => {
           let len = decode_u32_from_buf(&mut buf)?.0 as usize;

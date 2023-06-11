@@ -150,10 +150,7 @@ mod r#async {
   use super::*;
   use async_channel::Receiver;
   use futures_util::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
-  use trust_dns_proto::{
-    tcp::{Connect, DnsTcpStream},
-    udp::UdpSocket,
-  };
+  
 
   macro_rules! connection_bail {
     (impl $ass:ident => $ident:ident<$kind:ident>) => {

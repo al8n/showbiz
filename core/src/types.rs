@@ -883,7 +883,7 @@ impl Node {
         addr,
       },
       meta: Bytes::new(),
-      vsn: [protocol_version as u8, delegate_version as u8],
+      vsn: [protocol_version, delegate_version],
       state,
     }
   }

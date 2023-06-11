@@ -426,7 +426,7 @@ where
 
     // Fast path if nothing to piggypack
     if msgs.len() == 1 {
-      return self.raw_send_msg_packet(&addr, msgs.pop().unwrap().0).await;
+      return self.raw_send_msg_packet(addr, msgs.pop().unwrap().0).await;
     }
 
     // Create a compound message

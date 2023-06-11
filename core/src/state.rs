@@ -25,7 +25,7 @@ use sealed_metrics::*;
 mod sealed_metrics {
   use std::sync::Once;
 
-  const DEGRADED_PROBE: Once = Once::new();
+  static DEGRADED_PROBE: Once = Once::new();
 
   #[inline]
   pub(super) fn incr_degraded_probe<'a>(
@@ -37,7 +37,7 @@ mod sealed_metrics {
     metrics::increment_counter!("showbiz.degraded.probe", labels);
   }
 
-  const DEGRADED_TIMEOUT: Once = Once::new();
+  static DEGRADED_TIMEOUT: Once = Once::new();
 
   #[inline]
   pub(super) fn incr_degraded_timeout<'a>(
@@ -49,7 +49,7 @@ mod sealed_metrics {
     metrics::increment_counter!("showbiz.degraded.timeout", labels);
   }
 
-  const MSG_ALIVE: Once = Once::new();
+  static MSG_ALIVE: Once = Once::new();
 
   #[inline]
   pub(super) fn incr_msg_alive<'a>(
@@ -61,7 +61,7 @@ mod sealed_metrics {
     metrics::increment_counter!("showbiz.msg.alive", labels);
   }
 
-  const MSG_SUSPECT: Once = Once::new();
+  static MSG_SUSPECT: Once = Once::new();
 
   #[inline]
   pub(super) fn incr_msg_suspect<'a>(
@@ -73,7 +73,7 @@ mod sealed_metrics {
     metrics::increment_counter!("showbiz.msg.suspect", labels);
   }
 
-  const MSG_DEAD: Once = Once::new();
+  static MSG_DEAD: Once = Once::new();
 
   #[inline]
   pub(super) fn incr_msg_dead<'a>(
@@ -85,7 +85,7 @@ mod sealed_metrics {
     metrics::increment_counter!("showbiz.msg.dead", labels);
   }
 
-  const PUSH_PULL_NODE_HISTOGRAM: Once = Once::new();
+  static PUSH_PULL_NODE_HISTOGRAM: Once = Once::new();
 
   #[inline]
   pub(super) fn observe_push_pull_node<'a>(
@@ -98,7 +98,7 @@ mod sealed_metrics {
     metrics::histogram!("showbiz.push_pull_node", value, labels);
   }
 
-  const GOSSIP_HISTOGRAM: Once = Once::new();
+  static GOSSIP_HISTOGRAM: Once = Once::new();
 
   #[inline]
   pub(super) fn observe_gossip<'a>(
@@ -111,7 +111,7 @@ mod sealed_metrics {
     metrics::histogram!("showbiz.gossip", value, labels);
   }
 
-  const PROBE_HISTOGRAM: Once = Once::new();
+  static PROBE_HISTOGRAM: Once = Once::new();
 
   #[inline]
   pub(super) fn observe_probe_node<'a>(

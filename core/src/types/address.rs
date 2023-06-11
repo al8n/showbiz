@@ -100,7 +100,7 @@ impl<'de> Deserialize<'de> for Domain {
     D: serde::Deserializer<'de>,
   {
     Bytes::deserialize(deserializer)
-      .and_then(|n| Domain::try_from(n).map_err(|e| serde::de::Error::custom(e)))
+      .and_then(|n| Domain::try_from(n).map_err(serde::de::Error::custom))
   }
 }
 
@@ -203,7 +203,7 @@ impl TryFrom<&Bytes> for Domain {
   type Error = InvalidDomain;
 
   fn try_from(buf: &Bytes) -> Result<Self, Self::Error> {
-    match core::str::from_utf8(&buf) {
+    match core::str::from_utf8(buf) {
       Ok(s) => is_valid_domain_name(s).map(|_| Self(buf.clone())),
       Err(e) => Err(InvalidDomain::Utf8(e)),
     }
@@ -231,7 +231,7 @@ fn is_valid_domain_name(domain: &str) -> Result<(), InvalidDomain> {
   for label in domain.split('.') {
     let len = label.len();
     // Each label must be between 1 and 63 characters long
-    if len < 1 || len > 63 {
+    if !(1..=63).contains(&len) {
       return Err(InvalidDomain::InvalidLabelSize(len));
     }
     // Labels must start and end with an alphanumeric character

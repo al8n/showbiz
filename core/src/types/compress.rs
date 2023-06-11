@@ -135,7 +135,7 @@ impl Compress {
           if buf.remaining() < len {
             return Err(DecodeError::Truncated(MessageType::Compress.as_err_str()));
           }
-          this.buf = buf.split_to(len as usize);
+          this.buf = buf.split_to(len);
           hasher.update(&this.buf);
         }
         _ => {}

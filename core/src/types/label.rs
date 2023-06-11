@@ -128,7 +128,7 @@ impl Label {
 
   #[inline]
   pub(crate) fn from_bytes(s: Bytes) -> Result<Self, InvalidLabel> {
-    if s.len() > Self::MAX_SIZE || s.len() < 1 {
+    if s.len() > Self::MAX_SIZE || s.is_empty() {
       return Err(InvalidLabel::InvalidSize(s.len()));
     }
     match core::str::from_utf8(&s) {
@@ -139,7 +139,7 @@ impl Label {
 
   #[inline]
   pub(crate) fn from_slice(s: &[u8]) -> Result<Self, InvalidLabel> {
-    if s.len() > Self::MAX_SIZE || s.len() < 1 {
+    if s.len() > Self::MAX_SIZE || s.is_empty() {
       return Err(InvalidLabel::InvalidSize(s.len()));
     }
     match core::str::from_utf8(s) {
@@ -150,7 +150,7 @@ impl Label {
 
   #[inline]
   pub(crate) fn from_array<const N: usize>(s: [u8; N]) -> Result<Self, InvalidLabel> {
-    if s.len() > Self::MAX_SIZE || s.len() < 1 {
+    if s.len() > Self::MAX_SIZE || s.is_empty() {
       return Err(InvalidLabel::InvalidSize(s.len()));
     }
     match core::str::from_utf8(&s) {
@@ -207,10 +207,10 @@ impl<'de> Deserialize<'de> for Label {
   {
     if deserializer.is_human_readable() {
       String::deserialize(deserializer)
-        .and_then(|n| Label::try_from(n).map_err(|e| serde::de::Error::custom(e)))
+        .and_then(|n| Label::try_from(n).map_err(serde::de::Error::custom))
     } else {
       Bytes::deserialize(deserializer)
-        .and_then(|n| Label::try_from(n).map_err(|e| serde::de::Error::custom(e)))
+        .and_then(|n| Label::try_from(n).map_err(serde::de::Error::custom))
     }
   }
 }
@@ -287,7 +287,7 @@ impl TryFrom<&str> for Label {
   type Error = InvalidLabel;
 
   fn try_from(s: &str) -> Result<Self, Self::Error> {
-    if s.len() > Self::MAX_SIZE || s.len() < 1 {
+    if s.len() > Self::MAX_SIZE || s.is_empty() {
       return Err(InvalidLabel::InvalidSize(s.len()));
     }
     Ok(Self(Bytes::copy_from_slice(s.as_bytes())))
@@ -298,7 +298,7 @@ impl TryFrom<String> for Label {
   type Error = InvalidLabel;
 
   fn try_from(s: String) -> Result<Self, Self::Error> {
-    if s.len() > Self::MAX_SIZE || s.len() < 1 {
+    if s.len() > Self::MAX_SIZE || s.is_empty() {
       return Err(InvalidLabel::InvalidSize(s.len()));
     }
     Ok(Self(s.into()))
@@ -309,7 +309,7 @@ impl TryFrom<Bytes> for Label {
   type Error = InvalidLabel;
 
   fn try_from(s: Bytes) -> Result<Self, Self::Error> {
-    if s.len() > Self::MAX_SIZE || s.len() < 1 {
+    if s.len() > Self::MAX_SIZE || s.is_empty() {
       return Err(InvalidLabel::InvalidSize(s.len()));
     }
     match core::str::from_utf8(s.as_ref()) {
@@ -323,7 +323,7 @@ impl TryFrom<&Bytes> for Label {
   type Error = InvalidLabel;
 
   fn try_from(s: &Bytes) -> Result<Self, Self::Error> {
-    if s.len() > Self::MAX_SIZE || s.len() < 1 {
+    if s.len() > Self::MAX_SIZE || s.is_empty() {
       return Err(InvalidLabel::InvalidSize(s.len()));
     }
     match core::str::from_utf8(s.as_ref()) {

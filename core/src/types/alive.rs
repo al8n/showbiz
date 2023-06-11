@@ -44,7 +44,7 @@ impl Alive {
     buf.put_u8(2); // vsn tag
     buf.put_slice(&self.vsn);
     buf.put_u8(3); // node tag
-    self.node.encode_to(&mut buf);
+    self.node.encode_to(buf);
     buf.put_u8(4); // meta tag
     encode_u32_to_buf(&mut buf, self.meta.len() as u32); // meta len
     buf.put_slice(&self.meta);

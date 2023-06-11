@@ -179,7 +179,7 @@ fn encrypt_payload_in<A: AeadInPlace + Aead>(
       .map(|_| {
         dst.unsplit(bytes);
       })
-      .map_err(|e| SecurityError::AeadError(e))
+      .map_err(SecurityError::AeadError)
   } else {
     let mut bytes = dst.split_off(after_nonce);
     gcm
@@ -187,7 +187,7 @@ fn encrypt_payload_in<A: AeadInPlace + Aead>(
       .map(|_| {
         dst.unsplit(bytes);
       })
-      .map_err(|e| SecurityError::AeadError(e))
+      .map_err(SecurityError::AeadError)
   }
 }
 
@@ -203,7 +203,7 @@ fn decrypt_message_in<A: Aead + AeadInPlace>(
 
   gcm
     .decrypt_in_place(nonce, data, &mut ciphertext)
-    .map_err(|e| SecurityError::AeadError(e))?;
+    .map_err(SecurityError::AeadError)?;
   msg.unsplit(ciphertext);
   Ok(())
 }
@@ -234,7 +234,7 @@ fn encrypt_to<A: AeadInPlace + Aead>(
   let nonce = GenericArray::from_slice(nonce);
   gcm
     .encrypt_in_place(nonce, data, dst)
-    .map_err(|e| SecurityError::AeadError(e))
+    .map_err(SecurityError::AeadError)
 }
 
 impl SecretKeyring {

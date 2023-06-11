@@ -494,7 +494,7 @@ where
         let offset = random_offset(n);
 
         // Add at the end and swap with the node at the offset
-        memberlist.nodes.push(state.clone());
+        memberlist.nodes.push(state);
         memberlist.nodes.swap(n, offset);
 
         // Update numNodes after we've added a new node

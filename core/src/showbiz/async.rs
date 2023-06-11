@@ -191,7 +191,7 @@ where
     );
 
     let (config, options) = std::fs::read_to_string(opts.dns_config_path.as_path())
-      .and_then(|data| trust_dns_resolver::system_conf::parse_resolv_conf(data))
+      .and_then(trust_dns_resolver::system_conf::parse_resolv_conf)
       .map_err(|e| TransportError::Dns(DnsError::from(e)))?;
     let dns = if config.name_servers().is_empty() {
       tracing::warn!(
