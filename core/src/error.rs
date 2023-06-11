@@ -26,7 +26,7 @@ pub enum Error<D: Delegate, T: Transport> {
   #[error("showbiz: timeout waiting for update broadcast")]
   UpdateTimeout,
   #[error("showbiz: dns error: {0}")]
-  DNS(#[from] trust_dns_resolver::error::ResolveError),
+  Dns(#[from] trust_dns_resolver::error::ResolveError),
   #[error("showbiz: {0}")]
   Delegate(D::Error),
   #[error("showbiz: {0}")]

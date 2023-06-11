@@ -68,7 +68,7 @@ pub(crate) struct ShowbizCore<D: Delegate, T: Transport, S: Spawner> {
   queue: Mutex<MessageQueue>,
   nodes: Arc<RwLock<Memberlist<S>>>,
   ack_handlers: Arc<Mutex<HashMap<u32, AckHandler>>>,
-  dns: Option<DNS<T, S>>,
+  dns: Option<Dns<T, S>>,
   metrics_labels: Arc<Vec<metrics::Label>>,
   runtime: ArcSwapOption<Runtime<T>>,
   opts: Arc<Options<T>>,
@@ -178,14 +178,14 @@ where
     let dns = if config.name_servers().is_empty() {
       tracing::warn!(
         target = "showbiz",
-        "no DNS servers found in {}",
+        "no Dns servers found in {}",
         opts.dns_config_path.display()
       );
 
       None
     } else {
       Some(
-        DNS::new(config, options, AsyncRuntimeProvider::new(spawner))
+        Dns::new(config, options, AsyncRuntimeProvider::new(spawner))
           .map_err(Error::dns_resolve)?,
       )
     };
@@ -569,15 +569,15 @@ where
     self.inner.runtime.load()
   }
 
-  /// a helper to initiate a TCP-based DNS lookup for the given host.
+  /// a helper to initiate a TCP-based Dns lookup for the given host.
   /// The built-in Go resolver will do a UDP lookup first, and will only use TCP if
-  /// the response has the truncate bit set, which isn't common on DNS servers like
+  /// the response has the truncate bit set, which isn't common on Dns servers like
   /// Consul's. By doing the TCP lookup directly, we get the best chance for the
   /// largest list of hosts to join. Since joins are relatively rare events, it's ok
   /// to do this rather expensive operation.
   pub(crate) async fn tcp_lookup_ip(
     &self,
-    dns: &DNS<T, S>,
+    dns: &Dns<T, S>,
     host: &str,
     default_port: u16,
     node_name: &Name,
@@ -634,7 +634,7 @@ where
 
     // First try TCP so we have the best chance for the largest list of
     // hosts to join. If this fails it's not fatal since this isn't a standard
-    // way to query DNS, and we have a fallback below.
+    // way to query Dns, and we have a fallback below.
     if let Some(dns) = self.inner.dns.as_ref() {
       match self
         .tcp_lookup_ip(dns, addr.unwrap_domain(), port.unwrap(), &name)

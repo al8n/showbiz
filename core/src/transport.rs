@@ -482,14 +482,14 @@ mod r#async {
 
     /// Connect to the address with reliable connection, e.g. TCP
     ///
-    /// **Note**: This function is only used in DNS lookup
+    /// **Note**: This function is only used in Dns lookup
     async fn connect(addr: SocketAddr) -> std::io::Result<Self::Connection> {
       <Self::Connection as trust_dns_proto::tcp::Connect>::connect(addr).await
     }
 
     /// Connect to the address with unreliable connection, e.g. UDP
     ///
-    /// **Note**: This function is only used in DNS lookup
+    /// **Note**: This function is only used in Dns lookup
     async fn bind_unreliable(addr: SocketAddr) -> std::io::Result<Self::UnreliableConnection> {
       <Self::UnreliableConnection as trust_dns_proto::udp::UdpSocket>::bind(addr).await
     }

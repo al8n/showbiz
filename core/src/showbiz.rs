@@ -23,7 +23,7 @@ use crate::{
   awareness::Awareness,
   broadcast::ShowbizBroadcast,
   delegate::Delegate,
-  dns::DNS,
+  dns::Dns,
   network::META_MAX_SIZE,
   queue::DefaultNodeCalculator,
   timer::Timer,

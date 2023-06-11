@@ -8,7 +8,7 @@ use trust_dns_resolver::{
   AsyncResolver,
 };
 
-pub(crate) type DNS<T, S> = AsyncResolver<AsyncRuntimeProvider<T, S>>;
+pub(crate) type Dns<T, S> = AsyncResolver<AsyncRuntimeProvider<T, S>>;
 
 #[derive(Debug, thiserror::Error)]
 pub enum DnsError {

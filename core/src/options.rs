@@ -179,7 +179,7 @@ pub struct Options<T: Transport> {
   /// versions will just be zero, and version compliance won't be done.
   delegate_version: DelegateVersion,
 
-  /// Points to the system's DNS config file, usually located
+  /// Points to the system's Dns config file, usually located
   /// at `/etc/resolv.conf`. It can be overridden via config for easier testing.
   #[viewit(getter(const, style = "ref"))]
   dns_config_path: PathBuf,

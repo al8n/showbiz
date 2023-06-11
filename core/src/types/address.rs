@@ -235,7 +235,7 @@ fn is_valid_domain_name(domain: &str) -> Result<(), InvalidDomain> {
 }
 
 /// The Address for a node, can be an ip or a domain.
-#[derive(Debug, Clone, Eq, Hash)]
+#[derive(Debug, Clone, Eq)]
 pub enum NodeAddress {
   /// e.g. `128.0.0.1`
   Ip(IpAddr),
@@ -262,6 +262,18 @@ impl PartialEq for NodeAddress {
           false
         }
       }
+    }
+  }
+}
+
+impl core::hash::Hash for NodeAddress {
+  fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+    match self {
+      Self::Ip(addr) => addr.hash(state),
+      Self::Domain(addr) => match addr.as_str().parse::<IpAddr>() {
+        Ok(addr) => addr.hash(state),
+        Err(_) => addr.hash(state),
+      },
     }
   }
 }
