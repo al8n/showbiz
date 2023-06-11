@@ -3,8 +3,9 @@ use std::{
   time::{Duration, Instant},
 };
 
-use crate::types::{
-  DecodeError, DecodeU32Error, EncodeError, InvalidLabel, MessageType, NodeId, Packet,
+use crate::{
+  dns::DnsError,
+  types::{DecodeError, DecodeU32Error, EncodeError, InvalidLabel, MessageType, NodeId, Packet},
 };
 
 use bytes::{BufMut, Bytes, BytesMut};
@@ -111,13 +112,15 @@ impl ConnectionError {
 
 #[derive(thiserror::Error)]
 pub enum TransportError<T: Transport> {
-  #[error("{0}")]
+  #[error("connection error: {0}")]
   Connection(#[from] ConnectionError),
-  #[error("{0}")]
+  #[error("encode error: {0}")]
   Encode(#[from] EncodeError),
-  #[error("{0}")]
+  #[error("decode error: {0}")]
   Decode(#[from] DecodeError),
-  #[error("{0}")]
+  #[error("dns error: {0}")]
+  Dns(#[from] DnsError),
+  #[error("other: {0}")]
   Other(T::Error),
 }
 
@@ -169,7 +172,7 @@ mod r#async {
         pub(crate) async fn read_u32_varint(&mut self) -> Result<usize, TransportError<T>> {
           let mut n = 0;
           let mut shift = 0;
-          for i in 0..5 {
+          for _ in 0..5 {
             let mut byte = [0; 1];
             self.read_exact(&mut byte).await?;
             let b = byte[0];
@@ -396,7 +399,7 @@ mod r#async {
     type Checksumer: Checksumer + Send + Sync + 'static;
     type Connection: Connection + trust_dns_proto::tcp::DnsTcpStream + trust_dns_proto::tcp::Connect;
     type UnreliableConnection: Connection + trust_dns_proto::udp::UdpSocket;
-    type Options;
+    type Options: Clone + serde::Serialize + serde::de::DeserializeOwned + Send + Sync + 'static;
 
     /// Creates a new transport instance with the given options
     async fn new(opts: Self::Options) -> Result<Self, TransportError<Self>>

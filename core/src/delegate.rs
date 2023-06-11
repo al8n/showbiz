@@ -158,7 +158,6 @@ pub trait Delegate: Send + Sync + 'static {
   ) -> Result<(), Self::Error>;
 
   /// Invoked when we want to send a ping message to target by reliable connection. Return true if the target node does not expect ping message from reliable connection.
-  #[inline]
   fn disable_reliable_pings(&self, target: &NodeId) -> bool;
 }
 

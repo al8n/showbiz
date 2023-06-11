@@ -85,34 +85,10 @@ pub(crate) struct PushNodeState {
   meta: Bytes,
   incarnation: u32,
   state: NodeState,
+  /// - 0: encryption algorithm
+  /// - 1: compression algorithm
+  /// - 2: delegate version
   vsn: [u8; VSN_SIZE],
-}
-
-impl PushNodeState {
-  #[inline]
-  pub const fn pmin(&self) -> u8 {
-    self.vsn[0]
-  }
-  #[inline]
-  pub const fn pmax(&self) -> u8 {
-    self.vsn[1]
-  }
-  #[inline]
-  pub const fn pcur(&self) -> u8 {
-    self.vsn[2]
-  }
-  #[inline]
-  pub const fn dmin(&self) -> u8 {
-    self.vsn[3]
-  }
-  #[inline]
-  pub const fn dmax(&self) -> u8 {
-    self.vsn[4]
-  }
-  #[inline]
-  pub const fn dcur(&self) -> u8 {
-    self.vsn[5]
-  }
 }
 
 impl Default for PushNodeState {

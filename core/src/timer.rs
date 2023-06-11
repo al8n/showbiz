@@ -21,14 +21,13 @@ impl Timer {
     let (tx, rx) = oneshot::channel();
     (spawner)(
       async move {
-        let mut delay = Delay::new(dur);
-        let mut cancel_fut = cancel_rx.fuse();
+        let delay = Delay::new(dur);
         select! {
-          res = delay.fuse() => {
+          _ = delay.fuse() => {
             future.await;
             let _ = tx.send(());
           },
-          _ = cancel_fut => {},
+          _ = cancel_rx.fuse() => {},
         }
       }
       .boxed(),

@@ -20,13 +20,13 @@ use crossbeam_channel::{Receiver, Sender};
 use crate::{
   awareness::Awareness,
   broadcast::ShowbizBroadcast,
-  delegate::{Delegate, VoidDelegate},
+  delegate::Delegate,
   dns::DNS,
   network::META_MAX_SIZE,
   queue::DefaultNodeCalculator,
   timer::Timer,
   transport::Transport,
-  types::{Alive, Message, MessageType, Name, Node, NodeId, NodeState},
+  types::{Alive, Message, MessageType, Name, Node, NodeId},
   TransmitLimitedQueue,
 };
 
@@ -38,87 +38,7 @@ use super::{
 #[cfg(feature = "async")]
 mod r#async;
 #[cfg(feature = "async")]
-pub(crate) use r#async::*;
-
-impl Options {
-  #[inline]
-  pub fn into_builder<T: Transport>(self, t: T) -> ShowbizBuilder<T> {
-    ShowbizBuilder::new(t).with_options(self)
-  }
-}
-
-pub struct ShowbizBuilder<T, D = VoidDelegate> {
-  opts: Options,
-  transport: T,
-  delegate: Option<D>,
-  /// Holds all of the encryption keys used internally. It is
-  /// automatically initialized using the SecretKey and SecretKeys values.
-  keyring: Option<SecretKeyring>,
-}
-
-impl<T: Transport> ShowbizBuilder<T> {
-  #[inline]
-  pub fn new(transport: T) -> Self {
-    Self {
-      opts: Options::default(),
-      transport,
-      delegate: None,
-      keyring: None,
-    }
-  }
-}
-
-impl<T, D> ShowbizBuilder<T, D>
-where
-  T: Transport,
-  D: Delegate,
-{
-  #[inline]
-  pub fn with_options(mut self, opts: Options) -> Self {
-    self.opts = opts;
-    self
-  }
-
-  #[inline]
-  pub fn with_keyring(mut self, keyring: Option<SecretKeyring>) -> Self {
-    self.keyring = keyring;
-    self
-  }
-
-  #[inline]
-  pub fn with_transport<NT>(self, t: NT) -> ShowbizBuilder<NT, D> {
-    let Self {
-      opts,
-      delegate,
-      keyring,
-      ..
-    } = self;
-
-    ShowbizBuilder {
-      opts,
-      transport: t,
-      delegate,
-      keyring,
-    }
-  }
-
-  #[inline]
-  pub fn with_delegate<ND>(self, d: Option<ND>) -> ShowbizBuilder<T, ND> {
-    let Self {
-      opts,
-      transport,
-      delegate: _,
-      keyring,
-    } = self;
-
-    ShowbizBuilder {
-      opts,
-      transport,
-      delegate: d,
-      keyring,
-    }
-  }
-}
+pub use r#async::*;
 
 #[viewit::viewit]
 pub(crate) struct HotData {
@@ -180,19 +100,18 @@ pub(crate) struct Member<S: Spawner> {
 
 #[viewit::viewit]
 pub(crate) struct Memberlist<S: Spawner> {
-  /// self
-  local: Member<S>,
+  local: Name,
   /// remote nodes
   nodes: Vec<LocalNodeState>,
   node_map: HashMap<Name, Member<S>>,
 }
 
 impl<S: Spawner> Memberlist<S> {
-  fn new(local: Member<S>) -> Self {
+  fn new(local: Name) -> Self {
     Self {
-      local,
       nodes: Vec::new(),
       node_map: HashMap::new(),
+      local,
     }
   }
 
@@ -200,6 +119,6 @@ impl<S: Spawner> Memberlist<S> {
     self
       .nodes
       .iter()
-      .any(|n| !n.dead_or_left() && n.node.name() != self.local.state.node.name())
+      .any(|n| !n.dead_or_left() && n.node.name() != &self.local)
   }
 }

@@ -50,7 +50,7 @@ impl<D: Delegate, T: Transport, S: Spawner> Showbiz<D, T, S> {
     ping: Ping,
     deadline: Duration,
   ) -> Result<bool, Error<D, T>> {
-    let Ok(mut conn) = self.inner.transport.dial_address_timeout(target, deadline).await else {
+    let Ok(mut conn) = self.runtime().as_ref().unwrap().transport.dial_address_timeout(target, deadline).await else {
       // If the node is actually dead we expect this to fail, so we
       // shouldn't spam the logs with it. After this point, errors
       // with the connection are real, unexpected errors and should
@@ -130,7 +130,9 @@ impl<D: Delegate, T: Transport, S: Spawner> Showbiz<D, T, S> {
 
     // Attempt to connect
     let mut conn = self
-      .inner
+      .runtime()
+      .as_ref()
+      .unwrap()
       .transport
       .dial_address_timeout(id, self.inner.opts.tcp_timeout)
       .await

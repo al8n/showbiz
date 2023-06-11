@@ -39,6 +39,7 @@ futures-util = { version = "0.3", optional = true, features = ["io"] }
 pin-project-lite = { version = "0.2", optional = true }
 
 # common
+arc-swap = "1.6"
 aead = { version = "0.5", features = ["bytes"] }
 aes-gcm = "0.10"
 bytes = { workspace = true, features = ["serde"] }
@@ -50,7 +51,6 @@ ipnet = { version = "2.7", features = ["serde"] }
 metrics = { version = "0.20", optional = true }
 # TODO: remove this dependency when Rust's ident concat macro stable
 paste = "1"
-prost = { version = "0.11" }
 rand = { version = "0.8" }
 scopeguard = "1.1"
 serde = { version = "1", features = ["derive"] }

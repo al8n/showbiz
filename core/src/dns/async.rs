@@ -10,6 +10,14 @@ use trust_dns_resolver::{
 
 pub(crate) type DNS<T, S> = AsyncResolver<AsyncRuntimeProvider<T, S>>;
 
+#[derive(Debug, thiserror::Error)]
+pub enum DnsError {
+  #[error("{0}")]
+  IO(#[from] std::io::Error),
+  #[error("{0}")]
+  Resolve(#[from] trust_dns_resolver::error::ResolveError),
+}
+
 #[repr(transparent)]
 pub(crate) struct AsyncSpawn<S: Spawner> {
   spawner: S,

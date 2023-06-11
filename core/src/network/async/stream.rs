@@ -17,10 +17,9 @@ where
 {
   /// A long running thread that pulls incoming streams from the
   /// transport and hands them off for processing.
-  pub(crate) fn stream_listen(&self) {
+  pub(crate) fn stream_listener(&self, shutdown_rx: async_channel::Receiver<()>) {
     let this = self.clone();
-    let transport_rx = this.inner.transport.stream().clone();
-    let shutdown_rx = this.inner.shutdown_rx.clone();
+    let transport_rx = this.runtime().as_ref().unwrap().transport.stream().clone();
     let spawner = self.inner.spawner;
     spawner.spawn(async move {
       loop {
@@ -59,12 +58,7 @@ where
             id: NodeId::from_addr(n.node.addr.clone()).set_name(n.node.name.clone()),
             meta: n.meta.clone(),
             state: n.state,
-            pmin: n.pmin(),
-            pmax: n.pmax(),
-            pcur: n.pcur(),
-            dmin: n.dmin(),
-            dmax: n.dmax(),
-            dcur: n.dcur(),
+            vsn: n.vsn,
           })
           .collect::<Vec<_>>();
         merge.notify_merge(peers).await.map_err(Error::delegate)?;
@@ -94,7 +88,9 @@ where
       return Err(Error::MissingNodeName);
     }
     let mut conn = self
-      .inner
+      .runtime()
+      .as_ref()
+      .unwrap()
       .transport
       .dial_address_timeout(addr, self.inner.opts.tcp_timeout)
       .await
@@ -384,7 +380,7 @@ where
     label: &[u8],
     encryption_enabled: bool,
     keyring: Option<&SecretKeyring>,
-    opts: &Options,
+    opts: &Options<T>,
     metrics_labels: &[metrics::Label],
   ) -> Result<(Option<Bytes>, MessageType), Error<D, T>> {
     // Read the message type

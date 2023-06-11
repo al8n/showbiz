@@ -1,4 +1,4 @@
-#![forbid(unsafe_code)]
+// #![forbid(unsafe_code)]
 #![feature(ip)]
 
 mod awareness;
@@ -17,6 +17,7 @@ pub use queue::TransmitLimitedQueue;
 mod dns;
 mod security;
 mod showbiz;
+pub use showbiz::*;
 mod state;
 mod suspicion;
 pub mod transport;
@@ -28,6 +29,8 @@ pub use bytes;
 pub use ipnet::IpNet;
 
 mod timer;
+mod version;
+pub use version::*;
 
 pub const MIN_PROTOCOL_VERSION: u8 = 1;
 pub const PROTOCOL_VERSION2_COMPATIBLE: u8 = 2;

@@ -4,8 +4,9 @@ use super::*;
 #[derive(Debug, Clone)]
 pub(crate) struct Alive {
   incarnation: u32,
-  // The versions of the protocol/delegate that are being spoken, order:
-  // pmin, pmax, pcur, dmin, dmax, dcur
+  /// - 0: encryption algorithm
+  /// - 1: compression algorithm
+  /// - 2: delegate version
   vsn: [u8; VSN_SIZE],
   meta: Bytes,
   node: NodeId,

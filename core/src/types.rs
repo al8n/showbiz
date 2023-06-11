@@ -57,7 +57,7 @@
 
 use std::{
   io::{Error, ErrorKind},
-  net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
+  net::{IpAddr, SocketAddr},
   ops::{Deref, DerefMut},
   time::Instant,
 };
@@ -65,13 +65,8 @@ use std::{
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use serde::{Deserialize, Serialize};
 
-const VSN_SIZE: usize = 6;
-const VSN_ENCODED_SIZE: usize = 8;
-const VSN_EMPTY: [u8; VSN_SIZE] = [255; VSN_SIZE];
+use crate::version::{VSN_EMPTY, VSN_SIZE};
 
-const MAX_DNS_DOMAIN_SIZE: usize = 253;
-
-const LENGTH_SIZE: usize = core::mem::size_of::<u32>();
 const CHECKSUM_SIZE: usize = core::mem::size_of::<u32>();
 
 macro_rules! map_inlined {
@@ -1003,24 +998,21 @@ pub struct Node {
   meta: Bytes,
   /// State of the node.
   state: NodeState,
-  /// Minimum protocol version this understands
-  pmin: u8,
-  /// Maximum protocol version this understands
-  pmax: u8,
-  /// Current version node is speaking
-  pcur: u8,
-  /// Min protocol version for the delegate to understand
-  dmin: u8,
-  /// Max protocol version for the delegate to understand
-  dmax: u8,
-  /// Current version delegate is speaking
-  dcur: u8,
+  /// - 0: encryption algorithm
+  /// - 1: compression algorithm
+  vsn: [u8; VSN_SIZE],
 }
 
 impl Node {
   /// Construct a new node with the given name, address and state.
   #[inline]
-  pub fn new(name: Name, addr: NodeAddress, state: NodeState) -> Self {
+  pub fn new(
+    name: Name,
+    addr: NodeAddress,
+    state: NodeState,
+    protocol_version: u8,
+    delegate_version: u8,
+  ) -> Self {
     Self {
       id: NodeId {
         name,
@@ -1028,12 +1020,7 @@ impl Node {
         addr,
       },
       meta: Bytes::new(),
-      pmin: 0,
-      pmax: 0,
-      pcur: 0,
-      dmin: 0,
-      dmax: 0,
-      dcur: 0,
+      vsn: [protocol_version as u8, delegate_version as u8],
       state,
     }
   }
@@ -1051,10 +1038,13 @@ impl Node {
   }
 
   #[inline]
-  pub const fn vsn(&self) -> [u8; 6] {
-    [
-      self.pcur, self.pmin, self.pmax, self.dcur, self.dmin, self.dmax,
-    ]
+  pub const fn protocol_version(&self) -> u8 {
+    self.vsn[0]
+  }
+
+  #[inline]
+  pub const fn delegate_version(&self) -> u8 {
+    self.vsn[1]
   }
 
   #[inline]

@@ -1,136 +1,27 @@
-use std::{future::Future, net::ToSocketAddrs, sync::atomic::Ordering, time::Duration};
+use std::{
+  future::Future,
+  net::ToSocketAddrs,
+  sync::atomic::{AtomicU8, Ordering},
+  time::Duration,
+};
 
-use crate::{dns::AsyncRuntimeProvider, types::Dead};
+use crate::{
+  dns::{AsyncRuntimeProvider, DnsError},
+  transport::TransportError,
+  types::Dead,
+};
 
 use super::*;
 
-use futures_channel::oneshot::channel;
+use arc_swap::{strategy::DefaultStrategy, ArcSwapOption, Guard};
 use futures_timer::Delay;
 use futures_util::{future::BoxFuture, FutureExt};
 
-impl<T, D> ShowbizBuilder<T, D>
-where
-  T: Transport,
-  D: Delegate,
-{
-  pub async fn finalize<S>(self, spawner: S) -> Result<Showbiz<D, T, S>, Error<D, T>>
-  where
-    S: Spawner,
-  {
-    let Self {
-      opts,
-      transport,
-      delegate,
-      keyring,
-    } = self;
-
-    let (shutdown_tx, shutdown_rx) = async_channel::bounded(1);
-    let (handoff_tx, handoff_rx) = async_channel::bounded(1);
-    let (leave_broadcast_tx, leave_broadcast_rx) = async_channel::bounded(1);
-
-    let vsn = opts.build_vsn_array();
-    let name = opts.name.clone();
-    let advertise = transport
-      .final_advertise_addr(opts.advertise_addr)
-      .map_err(Error::transport)?;
-    let meta = if let Some(d) = &delegate {
-      d.node_meta(META_MAX_SIZE)
-    } else {
-      Bytes::new()
-    };
-    let encryption_enabled = if let Some(keyring) = &keyring {
-      !keyring.lock().await.is_empty()
-    } else {
-      false
-    };
-    if advertise.ip().is_global() && !encryption_enabled {
-      tracing::warn!(
-        target = "showbiz",
-        "binding to public address without encryption!"
-      );
-    }
-
-    // TODO: alive node
-    let id = NodeId {
-      name: opts.name.clone(),
-      port: Some(opts.bind_addr.port()),
-      addr: opts.bind_addr.ip().into(),
-    };
-    let awareness = Awareness::new(
-      opts.awareness_max_multiplier as isize,
-      Arc::new(vec![]),
-      id.clone(),
-    );
-    let hot = HotData::new();
-    let broadcast = TransmitLimitedQueue::new(
-      DefaultNodeCalculator::new(hot.num_nodes),
-      opts.retransmit_mult,
-    );
-
-    let data = std::fs::read_to_string(opts.dns_config_path.as_path())?;
-    let (config, options) = trust_dns_resolver::system_conf::parse_resolv_conf(data)?;
-    let dns = if config.name_servers().is_empty() {
-      tracing::warn!(
-        target = "showbiz",
-        "no DNS servers found in {}",
-        opts.dns_config_path.display()
-      );
-
-      None
-    } else {
-      Some(DNS::new(config, options, AsyncRuntimeProvider::new(spawner)).map_err(Error::dns)?)
-    };
-
-    // let num_nodes = hot.num_nodes;
-    Ok(Showbiz {
-      inner: Arc::new(ShowbizCore {
-        id,
-        awareness,
-        broadcast,
-        hot: HotData::new(),
-        advertise: RwLock::new(advertise),
-        dns,
-        leave_lock: Mutex::new(()),
-        transport,
-        delegate,
-        keyring,
-        shutdown_rx,
-        shutdown_tx,
-        handoff_tx,
-        handoff_rx,
-        leave_broadcast_tx,
-        leave_broadcast_rx,
-        queue: Mutex::new(MessageQueue::new()),
-        nodes: Arc::new(RwLock::new(Memberlist::new(Member {
-          state: LocalNodeState {
-            node: Arc::new(Node {
-              id: NodeId {
-                name: opts.name.clone(),
-                port: Some(opts.bind_addr.port()),
-                addr: opts.bind_addr.ip().into(),
-              },
-              meta,
-              pmin: vsn[0],
-              pmax: vsn[1],
-              pcur: vsn[2],
-              dmin: vsn[3],
-              dmax: vsn[4],
-              dcur: vsn[5],
-              state: NodeState::Dead,
-            }),
-            incarnation: Arc::new(AtomicU32::new(0)),
-            state: NodeState::Dead,
-            state_change: Instant::now(),
-          },
-          suspicion: None,
-        }))),
-        opts: Arc::new(opts),
-        ack_handlers: Arc::new(Mutex::new(HashMap::new())),
-        spawner,
-        metrics_labels: Arc::new(vec![]),
-      }),
-    })
-  }
+#[viewit::viewit(getters(skip), setters(skip))]
+pub(crate) struct Runtime<T: Transport> {
+  transport: T,
+  shutdown_tx: Sender<()>,
+  advertise: SocketAddr,
 }
 
 #[cfg(feature = "async")]
@@ -169,16 +60,12 @@ pub(crate) struct ShowbizCore<D: Delegate, T: Transport, S: Spawner> {
   id: NodeId,
   hot: HotData,
   awareness: Awareness,
-  advertise: RwLock<SocketAddr>,
   broadcast: TransmitLimitedQueue<ShowbizBroadcast, DefaultNodeCalculator>,
-  shutdown_rx: Receiver<()>,
-  shutdown_tx: Sender<()>,
   // Serializes calls to Leave
   leave_lock: Mutex<()>,
   leave_broadcast_tx: Sender<()>,
   leave_broadcast_rx: Receiver<()>,
-  opts: Arc<Options>,
-  transport: T,
+  opts: Arc<Options<T>>,
   keyring: Option<SecretKeyring>,
   delegate: Option<D>,
   handoff_tx: Sender<()>,
@@ -188,8 +75,15 @@ pub(crate) struct ShowbizCore<D: Delegate, T: Transport, S: Spawner> {
   ack_handlers: Arc<Mutex<HashMap<u32, AckHandler>>>,
   dns: Option<DNS<T, S>>,
   metrics_labels: Arc<Vec<metrics::Label>>,
+  runtime: ArcSwapOption<Runtime<T>>,
+  status: AtomicU8,
   spawner: S,
 }
+
+/// Safety: we guarantee that there is no race condition when the transport is modified
+unsafe impl<D: Delegate, T: Transport, S: Spawner> Send for ShowbizCore<D, T, S> {}
+/// Safety: we guarantee that there is no race condition when the transport is modified
+unsafe impl<D: Delegate, T: Transport, S: Spawner> Sync for ShowbizCore<D, T, S> {}
 
 pub struct Showbiz<D: Delegate, T: Transport, S: Spawner> {
   pub(crate) inner: Arc<ShowbizCore<D, T, S>>,
@@ -232,6 +126,175 @@ where
   S: Spawner,
   D: Delegate,
 {
+  #[inline]
+  pub async fn new(opts: Options<T>, spawner: S) -> Result<Self, Error<D, T>> {
+    Self::new_in(None, None, opts, spawner).await
+  }
+
+  #[inline]
+  pub async fn with_delegate(
+    delegate: D,
+    opts: Options<T>,
+    spawner: S,
+  ) -> Result<Self, Error<D, T>> {
+    Self::new_in(Some(delegate), None, opts, spawner).await
+  }
+
+  #[inline]
+  pub async fn with_keyring(
+    keyring: SecretKeyring,
+    opts: Options<T>,
+    spawner: S,
+  ) -> Result<Self, Error<D, T>> {
+    Self::new_in(None, Some(keyring), opts, spawner).await
+  }
+
+  #[inline]
+  pub async fn with_delegate_and_keyring(
+    delegate: D,
+    keyring: SecretKeyring,
+    opts: Options<T>,
+    spawner: S,
+  ) -> Result<Self, Error<D, T>> {
+    Self::new_in(Some(delegate), Some(keyring), opts, spawner).await
+  }
+
+  async fn new_in(
+    delegate: Option<D>,
+    mut keyring: Option<SecretKeyring>,
+    opts: Options<T>,
+    spawner: S,
+  ) -> Result<Self, Error<D, T>> {
+    let (handoff_tx, handoff_rx) = async_channel::bounded(1);
+    let (leave_broadcast_tx, leave_broadcast_rx) = async_channel::bounded(1);
+
+    if let Some(pk) = opts.secret_key() {
+      let has_keyring = keyring.is_some();
+      let keyring = keyring.get_or_insert(SecretKeyring::new(vec![], pk));
+      if has_keyring {
+        let mut mu = keyring.lock().await;
+        mu.insert(pk);
+        mu.use_key(&pk)?;
+      }
+    }
+
+    let id = NodeId {
+      name: opts.name.clone(),
+      port: Some(opts.bind_addr.port()),
+      addr: opts.bind_addr.ip().into(),
+    };
+    let awareness = Awareness::new(
+      opts.awareness_max_multiplier as isize,
+      Arc::new(vec![]),
+      id.clone(),
+    );
+    let hot = HotData::new();
+    let broadcast = TransmitLimitedQueue::new(
+      DefaultNodeCalculator::new(hot.num_nodes),
+      opts.retransmit_mult,
+    );
+
+    let (config, options) = std::fs::read_to_string(opts.dns_config_path.as_path())
+      .and_then(|data| trust_dns_resolver::system_conf::parse_resolv_conf(data))
+      .map_err(|e| TransportError::Dns(DnsError::from(e)))?;
+    let dns = if config.name_servers().is_empty() {
+      tracing::warn!(
+        target = "showbiz",
+        "no DNS servers found in {}",
+        opts.dns_config_path.display()
+      );
+
+      None
+    } else {
+      Some(
+        DNS::new(config, options, AsyncRuntimeProvider::new(spawner))
+          .map_err(Error::dns_resolve)?,
+      )
+    };
+
+    Ok(Showbiz {
+      inner: Arc::new(ShowbizCore {
+        id,
+        awareness,
+        broadcast,
+        hot: HotData::new(),
+        dns,
+        leave_lock: Mutex::new(()),
+        delegate,
+        keyring,
+        handoff_tx,
+        handoff_rx,
+        leave_broadcast_tx,
+        leave_broadcast_rx,
+        queue: Mutex::new(MessageQueue::new()),
+        nodes: Arc::new(RwLock::new(Memberlist::new(opts.name.clone()))),
+        opts: Arc::new(opts),
+        ack_handlers: Arc::new(Mutex::new(HashMap::new())),
+        spawner,
+        metrics_labels: Arc::new(vec![]),
+        status: AtomicU8::new(0),
+        runtime: ArcSwapOption::empty(),
+      }),
+    })
+  }
+
+  #[inline]
+  pub async fn bootstrap(&self) -> Result<(), Error<D, T>> {
+    // if we already in running status, just return
+    if self.inner.status.load(Ordering::SeqCst) == 1 {
+      return Ok(());
+    }
+
+    let transport = T::new(self.inner.opts.transport.clone()).await?;
+
+    // Get the final advertise address from the transport, which may need
+    // to see which address we bound to. We'll refresh this each time we
+    // send out an alive message.
+    let advertise = transport.final_advertise_addr(self.inner.opts.advertise_addr)?;
+    let encryption_enabled = self.encryption_enabled().await;
+
+    if advertise.ip().is_global() && !encryption_enabled {
+      tracing::warn!(
+        target = "showbiz",
+        "binding to public address without encryption!"
+      );
+    }
+
+    let (shutdown_tx, shutdown_rx) = async_channel::bounded(1);
+    let runtime = Runtime {
+      transport,
+      shutdown_tx,
+      advertise,
+    };
+    self.inner.runtime.store(Some(Arc::new(runtime)));
+
+    self.stream_listener(shutdown_rx.clone());
+    self.packet_handler(shutdown_rx.clone());
+    self.packet_listener(shutdown_rx.clone());
+
+    let meta = if let Some(d) = &self.inner.delegate {
+      d.node_meta(META_MAX_SIZE)
+    } else {
+      Bytes::new()
+    };
+
+    if meta.len() > META_MAX_SIZE {
+      self.inner.runtime.store(None);
+      panic!("Node meta data provided is longer than the limit");
+    }
+
+    let alive = Alive {
+      incarnation: self.next_incarnation(),
+      vsn: self.inner.opts.build_vsn_array(),
+      meta,
+      node: self.inner.id.clone(),
+    };
+
+    self.alive_node(alive, None, true).await;
+    self.schedule(shutdown_rx).await;
+    Ok(())
+  }
+
   /// Returns a list of all known live nodes.
   #[inline]
   pub async fn members(&self) -> Vec<Arc<Node>> {
@@ -280,7 +343,7 @@ where
       self.inner.hot.leave.fetch_add(1, Ordering::SeqCst);
 
       let mut memberlist = self.inner.nodes.write().await;
-      if let Some(state) = memberlist.node_map.get(memberlist.local.state.id().name()) {
+      if let Some(state) = memberlist.node_map.get(&memberlist.local) {
         // This dead message is special, because Node and From are the
         // same. This helps other nodes figure out that a node left
         // intentionally. When Node equals From, other nodes know for
@@ -389,12 +452,6 @@ where
     self.inner.awareness.get_health_score().await as usize
   }
 
-  /// Used to return the local Node
-  #[inline]
-  pub async fn local_node(&self) -> Arc<Node> {
-    self.inner.nodes.read().await.local.state.node.clone()
-  }
-
   /// Used to trigger re-advertising the local node. This is
   /// primarily used with a Delegate to support dynamic updates to the local
   /// meta data.  This will block until the update message is successfully
@@ -414,7 +471,17 @@ where
 
     // Get the existing node
     // unwrap safe here this is self
-    let node_id = self.inner.nodes.read().await.local().state().id().clone();
+    let node_id = self
+      .inner
+      .nodes
+      .read()
+      .await
+      .node_map
+      .get(&self.inner.id.name)
+      .unwrap()
+      .state
+      .id()
+      .clone();
 
     // Format a new alive message
     let alive = Alive {
@@ -461,36 +528,33 @@ where
     self.send_user_msg(to.id(), msg).await
   }
 
-  pub async fn shutdown<P>(self, parker: P) -> Result<(), Error<D, T>>
-  where
-    P: std::future::Future<Output = ()> + Copy,
-  {
-    // Shut down the transport first, which should block until it's
-    // completely torn down. If we kill the memberlist-side handlers
-    // those I/O handlers might get stuck.
-    let Self { inner: core } = self;
+  pub async fn shutdown(&self) -> Result<(), Error<D, T>> {
+    // // Shut down the transport first, which should block until it's
+    // // completely torn down. If we kill the memberlist-side handlers
+    // // those I/O handlers might get stuck.
+    // let Self { inner: core } = self;
 
-    while Arc::strong_count(&core) > 1 {
-      parker.await;
-    }
+    // while Arc::strong_count(&core) > 1 {
+    //   parker.await;
+    // }
 
-    let ShowbizCore {
-      hot,
+    // let ShowbizCore {
+    //   hot,
 
-      shutdown_tx,
+    //   shutdown_tx,
 
-      transport,
-      ..
-    } = Arc::into_inner(core).unwrap();
+    //   transport,
+    //   ..
+    // } = Arc::into_inner(core).unwrap();
 
-    // Shut down the transport first, which should block until it's
-    // completely torn down. If we kill the memberlist-side handlers
-    // those I/O handlers might get stuck.
-    transport.shutdown().await.map_err(Error::transport)?;
+    // // Shut down the transport first, which should block until it's
+    // // completely torn down. If we kill the memberlist-side handlers
+    // // those I/O handlers might get stuck.
+    // transport.shutdown().await.map_err(Error::transport)?;
 
-    // Now tear down everything else.
-    hot.shutdown.store(1, Ordering::SeqCst);
-    drop(shutdown_tx);
+    // // Now tear down everything else.
+    // hot.shutdown.store(1, Ordering::SeqCst);
+    // drop(shutdown_tx);
 
     Ok(())
   }
@@ -503,6 +567,11 @@ where
   T: Transport,
   S: Spawner,
 {
+  #[inline]
+  pub(crate) fn runtime(&self) -> Guard<Option<Arc<Runtime<T>>>, DefaultStrategy> {
+    self.inner.runtime.load()
+  }
+
   /// a helper to initiate a TCP-based DNS lookup for the given host.
   /// The built-in Go resolver will do a UDP lookup first, and will only use TCP if
   /// the response has the truncate bit set, which isn't common on DNS servers like
@@ -532,7 +601,7 @@ where
     } else {
       dns.lookup_ip(host).await
     }
-    .map_err(Error::dns)?;
+    .map_err(Error::dns_resolve)?;
 
     Ok(
       ips
@@ -596,29 +665,14 @@ where
     addr
       .unwrap_domain()
       .to_socket_addrs()
-      .map_err(Into::into)
+      .map_err(|e| Error::Transport(TransportError::Dns(DnsError::IO(e))))
       .map(|addrs| addrs.into_iter().map(|addr| (name.clone(), addr)).collect())
   }
 
   #[inline]
   pub(crate) async fn get_advertise(&self) -> SocketAddr {
-    *self.inner.advertise.read().await
-  }
-
-  #[inline]
-  pub(crate) async fn set_advertise(&self, addr: SocketAddr) {
-    *self.inner.advertise.write().await = addr;
-  }
-
-  #[inline]
-  pub(crate) async fn refresh_advertise(&self) -> Result<SocketAddr, Error<D, T>> {
-    let addr = self
-      .inner
-      .transport
-      .final_advertise_addr(self.inner.opts.advertise_addr)
-      .map_err(Error::transport)?;
-    self.set_advertise(addr).await;
-    Ok(addr)
+    // Unwrap is safe here, because advertise is always set before get_advertise is called.
+    self.inner.runtime.load().as_ref().unwrap().advertise
   }
 
   /// Check for any other alive node.
@@ -636,7 +690,7 @@ where
 
   pub(crate) async fn encryption_enabled(&self) -> bool {
     if let Some(keyring) = &self.inner.keyring {
-      !keyring.lock().await.is_empty()
+      !keyring.lock().await.is_empty() && !self.inner.opts.encryption_algo.is_none()
     } else {
       false
     }

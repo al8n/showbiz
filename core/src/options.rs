@@ -9,13 +9,15 @@ use bytes::Bytes;
 
 use super::{
   keyring::SecretKey,
-  security::{EncryptionAlgo, MAX_ENCRYPTION_VERSION},
+  security::EncryptionAlgo,
+  transport::Transport,
   types::{CompressionAlgo, Name},
+  version::{DelegateVersion, ProtocolVersion, VSN_SIZE},
 };
 
 #[viewit::viewit(getters(vis_all = "pub"), setters(vis_all = "pub", prefix = "with"))]
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct Options {
+pub struct Options<T: Transport> {
   /// The name of this node. This must be unique in the cluster.
   #[viewit(getter(const, style = "ref"))]
   name: Name,
@@ -166,6 +168,9 @@ pub struct Options {
   /// AES-192, or AES-256.
   secret_key: Option<SecretKey>,
 
+  /// Used to guarantee protocol-compatibility
+  protocol_version: ProtocolVersion,
+
   // /// Holds all of the encryption keys used internally. It is
   // /// automatically initialized using the SecretKey and SecretKeys values.
   // #[viewit(getter(style = "ref", result(converter(fn = "Option::as_ref"), type = "Option<&SecretKeyring>")))]
@@ -174,17 +179,7 @@ pub struct Options {
   /// for any custom messages that the delegate might do (broadcasts,
   /// local/remote state, etc.). If you don't set these, then the protocol
   /// versions will just be zero, and version compliance won't be done.
-  delegate_protocol_version: u8,
-  /// Used to guarantee protocol-compatibility
-  /// for any custom messages that the delegate might do (broadcasts,
-  /// local/remote state, etc.). If you don't set these, then the protocol
-  /// versions will just be zero, and version compliance won't be done.
-  delegate_protocol_min: u8,
-  /// Used to guarantee protocol-compatibility
-  /// for any custom messages that the delegate might do (broadcasts,
-  /// local/remote state, etc.). If you don't set these, then the protocol
-  /// versions will just be zero, and version compliance won't be done.
-  delegate_protocol_max: u8,
+  delegate_version: DelegateVersion,
 
   /// Points to the system's DNS config file, usually located
   /// at `/etc/resolv.conf`. It can be overridden via config for easier testing.
@@ -222,29 +217,31 @@ pub struct Options {
     )
   ))]
   allowed_cidrs: Option<HashSet<ipnet::IpNet>>,
+
+  /// Transport options
+  #[viewit(getter(style = "ref", const))]
+  transport: T::Options,
+
   /// The interval at which we check the message
   /// queue to apply the warning and max depth.
   queue_check_interval: Duration,
 }
 
-impl Default for Options {
+impl<T> Default for Options<T>
+where
+  T: Transport,
+  T::Options: Default,
+{
   #[inline]
   fn default() -> Self {
-    Self::lan()
+    Self::lan(T::Options::default())
   }
 }
 
-impl Options {
+impl<T: Transport> Options<T> {
   #[inline]
-  pub const fn build_vsn_array(&self) -> [u8; 6] {
-    [
-      MAX_ENCRYPTION_VERSION as u8,
-      MAX_ENCRYPTION_VERSION as u8,
-      self.encryption_algo as u8,
-      self.delegate_protocol_min,
-      self.delegate_protocol_max,
-      self.delegate_protocol_version,
-    ]
+  pub const fn build_vsn_array(&self) -> [u8; VSN_SIZE] {
+    [self.protocol_version as u8, self.delegate_version as u8]
   }
 
   /// Returns a sane set of configurations for Memberlist.
@@ -254,7 +251,7 @@ impl Options {
   /// for higher convergence at the cost of higher bandwidth usage. Regardless,
   /// these values are a good starting point when getting started with memberlist.
   #[inline]
-  pub fn lan() -> Self {
+  pub fn lan(transport: T::Options) -> Self {
     #[cfg(not(any(target_arch = "wasm32", windows)))]
     let hostname = {
       let uname = rustix::process::uname();
@@ -301,15 +298,15 @@ impl Options {
       gossip_verify_outgoing: true,
       compression_algo: CompressionAlgo::LZW, // Enable compression by default
       secret_key: None,
-      delegate_protocol_version: 0,
-      delegate_protocol_min: 0,
-      delegate_protocol_max: 0,
+      delegate_version: DelegateVersion::V0,
+      protocol_version: ProtocolVersion::V0,
       dns_config_path: PathBuf::from("/etc/resolv.conf"),
       handoff_queue_depth: 1024,
       packet_buffer_size: 1400,
       dead_node_reclaim_time: Duration::ZERO,
       require_node_names: false,
       allowed_cidrs: None,
+      transport,
       queue_check_interval: Duration::from_secs(30),
     }
   }
@@ -318,8 +315,8 @@ impl Options {
   /// that is optimized for most WAN environments. The default configuration is
   /// still very conservative and errs on the side of caution.
   #[inline]
-  pub fn wan() -> Self {
-    Self::lan()
+  pub fn wan(transport: T::Options) -> Self {
+    Self::lan(transport)
       .with_tcp_timeout(Duration::from_secs(30))
       .with_suspicion_mult(6)
       .with_push_pull_interval(Duration::from_secs(60))
@@ -334,8 +331,8 @@ impl Options {
   /// that is optimized for a local loopback environments. The default configuration is
   /// still very conservative and errs on the side of caution.
   #[inline]
-  pub fn local() -> Self {
-    Self::lan()
+  pub fn local(transport: T::Options) -> Self {
+    Self::lan(transport)
       .with_tcp_timeout(Duration::from_secs(1))
       .with_indirect_checks(1)
       .with_retransmit_mult(2)

@@ -13,9 +13,8 @@ where
   /// a long running thread that processes messages received
   /// over the packet interface, but is decoupled from the listener to avoid
   /// blocking the listener which may cause ping/ack messages to be delayed.
-  pub(crate) fn packet_handler(&self) {
+  pub(crate) fn packet_handler(&self, shutdown_rx: async_channel::Receiver<()>) {
     let this = self.clone();
-    let shutdown_rx = this.inner.shutdown_rx.clone();
     let handoff_rx = this.inner.handoff_rx.clone();
     self.inner.spawner.spawn(async move {
       loop {

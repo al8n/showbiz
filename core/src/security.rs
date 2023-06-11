@@ -76,13 +76,9 @@ impl EncryptionAlgo {
   }
 }
 
-const MIN_ENCRYPTION_VERSION: EncryptionAlgo = EncryptionAlgo::None;
-pub(crate) const MAX_ENCRYPTION_VERSION: EncryptionAlgo = EncryptionAlgo::NoPadding;
-
 const VERSION_SIZE: usize = 1;
 pub(crate) const NONCE_SIZE: usize = 12;
 const TAG_SIZE: usize = 16;
-const MAX_PAD_OVERHEAD: usize = 16;
 pub(crate) const BLOCK_SIZE: usize = 16;
 
 // pkcs7encode is used to pad a byte buffer to a specific block size using

@@ -18,10 +18,9 @@ where
   S: Spawner,
   D: Delegate,
 {
-  pub(crate) fn packet_listener(&self) {
+  pub(crate) fn packet_listener(&self, shutdown_rx: async_channel::Receiver<()>) {
     let this = self.clone();
-    let shutdown_rx = this.inner.shutdown_rx.clone();
-    let transport_rx = this.inner.transport.packet().clone();
+    let transport_rx = this.runtime().as_ref().unwrap().transport.packet().clone();
     self.inner.spawner.spawn(async move {
       loop {
         futures_util::select! {
@@ -42,7 +41,7 @@ where
   async fn ingest_packet(&self, packet: Packet) {
     let addr = packet.from();
     let timestamp = packet.timestamp();
-    let (mut buf, mut packet_label) = match Self::remove_label_header_from(packet.into_inner()) {
+    let (mut buf, mut packet_label) = match Label::remove_label_header_from(packet.into_inner()) {
       Ok((buf, packet_label)) => (buf, packet_label),
       Err(e) => {
         tracing::error!(target = "showbiz", err = %e, addr = %addr);
@@ -419,7 +418,7 @@ where
     let bytes_avail = self.inner.opts.packet_buffer_size
       - msg.len()
       - COMPOUND_HEADER_OVERHEAD
-      - Self::label_overhead(&self.inner.opts.label);
+      - Label::label_overhead(&self.inner.opts.label);
 
     let mut msgs = self
       .get_broadcast_with_prepend(vec![msg], COMPOUND_OVERHEAD, bytes_avail)
@@ -496,7 +495,9 @@ where
         }
 
         $this
-          .inner
+          .runtime()
+          .as_ref()
+          .unwrap()
           .transport
           .write_to_address(&$buf, &$addr)
           .await

@@ -1,18 +1,16 @@
-use std::{collections::hash_map::Entry, net::SocketAddr, sync::atomic::Ordering, time::Duration};
+use std::{collections::hash_map::Entry, sync::atomic::Ordering, time::Duration};
 
 use crate::{
-  network::{RemoteNodeState, COMPOUND_HEADER_OVERHEAD, COMPOUND_OVERHEAD},
+  network::{COMPOUND_HEADER_OVERHEAD, COMPOUND_OVERHEAD},
   security::encrypt_overhead,
   showbiz::{AckHandler, Member, Memberlist, Spawner},
   suspicion::Suspicion,
   timer::Timer,
-  transport::TransportError,
-  types::{Alive, Dead, IndirectPing, Message, MessageType, Name, Ping, Suspect},
+  types::{Alive, Dead, IndirectPing, Label, Message, MessageType, Ping, Suspect},
 };
 
 use super::*;
 use bytes::{BufMut, Bytes, BytesMut};
-use futures_channel::oneshot::Sender;
 use futures_timer::Delay;
 use futures_util::{future::BoxFuture, FutureExt, StreamExt};
 use rand::{seq::SliceRandom, Rng};
@@ -169,14 +167,10 @@ where
     memberlist: &mut Memberlist<S>,
     d: Dead,
   ) -> Result<(), Error<D, T>> {
-    let state = if d.dead_self() {
-      &mut memberlist.local
-    } else {
-      match memberlist.node_map.get_mut(&d.node.name) {
-        Some(state) => state,
-        // If we've never heard about this node before, ignore it
-        None => return Ok(()),
-      }
+    let state = match memberlist.node_map.get_mut(&d.node.name) {
+      Some(state) => state,
+      // If we've never heard about this node before, ignore it
+      None => return Ok(()),
     };
 
     // Ignore old incarnation numbers
@@ -417,12 +411,7 @@ where
       id: alive.node.clone(),
       meta: alive.meta.clone(),
       state: NodeState::Alive,
-      pmin: vsn[0],
-      pmax: vsn[1],
-      pcur: vsn[2],
-      dmin: vsn[3],
-      dmax: vsn[4],
-      dcur: vsn[5],
+      vsn,
     });
     // Invoke the Alive delegate if any. This can be used to filter out
     // alive messages based on custom logic. For example, using a cluster name.
@@ -449,8 +438,8 @@ where
           }
 
           // If DeadNodeReclaimTime is configured, check if enough time has elapsed since the node died.
-          let can_reclaim = (self.inner.opts.dead_node_reclaim_time > Duration::ZERO
-            && state.state_change.elapsed() > self.inner.opts.dead_node_reclaim_time);
+          let can_reclaim = self.inner.opts.dead_node_reclaim_time > Duration::ZERO
+            && state.state_change.elapsed() > self.inner.opts.dead_node_reclaim_time;
 
           // Allow the address to be updated if a dead node is being replaced.
           if state.state == NodeState::Left || (state.state == NodeState::Dead && can_reclaim) {
@@ -468,12 +457,7 @@ where
                     id: alive.node.clone(),
                     meta: alive.meta.clone(),
                     state: NodeState::Alive,
-                    pmin: alive.vsn[0],
-                    pmax: alive.vsn[1],
-                    pcur: alive.vsn[2],
-                    dmin: alive.vsn[3],
-                    dmax: alive.vsn[4],
-                    dcur: alive.vsn[5],
+                    vsn: alive.vsn,
                   }),
                 )
                 .await
@@ -582,12 +566,7 @@ where
           id: alive.node,
           meta: alive.meta,
           state: NodeState::Alive,
-          pmin: todo!(),
-          pmax: todo!(),
-          pcur: todo!(),
-          dmin: todo!(),
-          dmax: todo!(),
-          dcur: todo!(),
+          vsn: alive.vsn,
         });
         if member.state.state != NodeState::Alive {
           member.state.state = NodeState::Alive;
@@ -751,21 +730,21 @@ where
   S: Spawner,
 {
   /// Used to ensure the Tick is performed periodically.
-  pub(crate) async fn schedule(&self) {
+  pub(crate) async fn schedule(&self, shutdown_rx: async_channel::Receiver<()>) {
     // Create a new probeTicker
     if self.inner.opts.probe_interval > Duration::ZERO {
       self
         .trigger_probe(
           self.inner.opts.probe_interval,
           async_io::Timer::interval(self.inner.opts.probe_interval),
-          self.inner.shutdown_rx.clone(),
+          shutdown_rx.clone(),
         )
         .await;
     }
 
     // Create a push pull ticker if needed
     if self.inner.opts.push_pull_interval > Duration::ZERO {
-      self.trigger_push_pull(self.inner.shutdown_rx.clone()).await;
+      self.trigger_push_pull(shutdown_rx.clone()).await;
     }
 
     // Create a gossip ticker if needed
@@ -774,7 +753,7 @@ where
         .trigger_gossip(
           self.inner.opts.gossip_interval,
           async_io::Timer::interval(self.inner.opts.gossip_interval),
-          self.inner.shutdown_rx.clone(),
+          shutdown_rx.clone(),
         )
         .await;
     }
@@ -817,7 +796,7 @@ where
     // Track the number of indexes we've considered probing
     let mut num_check = 0;
     let mut probe_index = 0;
-    'start: loop {
+    loop {
       let memberlist = self.inner.nodes.read().await;
 
       // Make sure we don't wrap around infinitely
@@ -1261,7 +1240,7 @@ where
     // Compute the bytes available
     let mut bytes_avail = self.inner.opts.packet_buffer_size
       - COMPOUND_HEADER_OVERHEAD
-      - Self::label_overhead(&self.inner.opts.label);
+      - Label::label_overhead(&self.inner.opts.label);
 
     if self.encryption_enabled().await {
       bytes_avail = bytes_avail.saturating_sub(encrypt_overhead(self.inner.opts.encryption_algo));
