@@ -64,7 +64,7 @@ impl Awareness {
 
     #[cfg(feature = "metrics")]
     {
-      const HEALTH_GAUGE: std::sync::Once = std::sync::Once::new();
+      static HEALTH_GAUGE: std::sync::Once = std::sync::Once::new();
 
       if _initial != _fnl {
         HEALTH_GAUGE.call_once(|| {

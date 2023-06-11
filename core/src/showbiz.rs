@@ -107,11 +107,12 @@ pub(crate) struct Member<S: Spawner> {
   suspicion: Option<Suspicion<S>>,
 }
 
-#[viewit::viewit]
+#[viewit::viewit(getters(skip), setters(skip))]
 pub(crate) struct Memberlist<S: Spawner> {
   local: Name,
   /// remote nodes
   nodes: Vec<LocalNodeState>,
+  #[allow(clippy::mutable_key_type)]
   node_map: HashMap<Name, Member<S>>,
 }
 

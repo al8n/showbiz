@@ -118,7 +118,7 @@ where
   pub(super) async fn raw_send_msg_stream(
     &self,
     conn: &mut ReliableConnection<T>,
-    label: &[u8],
+    label: &Label,
     mut buf: Bytes,
     addr: &NodeId,
     encryption_enabled: bool,
@@ -257,7 +257,7 @@ where
     addr: &NodeId,
     encryption_enabled: bool,
     join: bool,
-    stream_label: &[u8],
+    stream_label: &Label,
   ) -> Result<(), Error<D, T>> {
     // Setup a deadline
     conn.set_timeout(Some(self.inner.opts.tcp_timeout));
@@ -348,7 +348,7 @@ where
             *labels.last_mut().unwrap() = label;
           }
           let iter = labels.iter();
-          metrics::gauge!("showbiz.node.instances", cnt as f64, iter);
+          set_node_instances_gauge(cnt as f64, iter);
         }
         labels.pop();
       });
@@ -377,7 +377,7 @@ where
   /// of each message.
   pub(super) async fn read_stream(
     conn: &mut ReliableConnection<T>,
-    label: &[u8],
+    label: &Label,
     encryption_enabled: bool,
     keyring: Option<&SecretKeyring>,
     opts: &Options<T>,
@@ -634,7 +634,7 @@ where
           }
         };
 
-        if &ping.target != &self.inner.id {
+        if ping.target.name != self.inner.opts.name {
           tracing::error!(target = "showbiz", local= %self.inner.id, remote = %addr, "got ping for unexpected node {}", ping.target);
           return;
         }

@@ -45,22 +45,6 @@ impl Domain {
   }
 
   #[inline]
-  pub(crate) fn from_bytes(s: &[u8]) -> Result<Self, InvalidDomain> {
-    match core::str::from_utf8(s) {
-      Ok(s) => Self::try_from(s),
-      Err(e) => Err(e.into()),
-    }
-  }
-
-  #[inline]
-  pub(crate) fn from_array<const N: usize>(s: [u8; N]) -> Result<Self, InvalidDomain> {
-    match core::str::from_utf8(&s) {
-      Ok(domain) => Self::try_from(domain),
-      Err(e) => Err(e.into()),
-    }
-  }
-
-  #[inline]
   pub(crate) fn encoded_len(&self) -> usize {
     1 + self.0.len()
   }

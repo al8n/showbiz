@@ -6,7 +6,7 @@ use crate::{
   showbiz::{AckHandler, Member, Memberlist, Spawner},
   suspicion::Suspicion,
   timer::Timer,
-  types::{Alive, Dead, IndirectPing, Label, Message, MessageType, Ping, Suspect},
+  types::{Alive, Dead, IndirectPing, Message, MessageType, Ping, Suspect},
 };
 
 use super::*;
@@ -812,7 +812,7 @@ where
       // Determine if we should probe this node
       let mut skip = false;
       let node = memberlist.nodes[probe_index].clone();
-      if node.dead_or_left() || node.id() == &self.inner.id {
+      if node.dead_or_left() || node.id().name == self.inner.opts.name {
         skip = true;
       }
 
@@ -991,7 +991,11 @@ where
       random_nodes(
         self.inner.opts.indirect_checks,
         &memberlist,
-        Some(|n: &LocalNodeState| n.id() == target.id() || n.state != NodeState::Alive),
+        Some(|n: &LocalNodeState| {
+          n.id().name == self.inner.opts.name
+            || n.id().name == target.id().name
+            || n.state != NodeState::Alive
+        }),
       )
     };
 
@@ -1005,7 +1009,7 @@ where
       let mut buf = BytesMut::with_capacity(MessageType::SIZE + ind.encoded_len());
       buf.put_u8(MessageType::IndirectPing as u8);
       ind.encode_to(&mut buf);
-      if let Err(e) = self.send_msg(ind.target(), Message(buf)).await {
+      if let Err(e) = self.send_msg(&ind.target, Message(buf)).await {
         tracing::error!(target = "showbiz", local = %self.inner.id, remote = %peer, err=%e, "failed to send indirect unreliable ping");
       }
     }
@@ -1225,10 +1229,16 @@ where
       random_nodes(
         self.inner.opts.gossip_nodes,
         &memberlist,
-        Some(|n: &LocalNodeState| match n.state {
-          NodeState::Alive | NodeState::Suspect => false,
-          NodeState::Dead => n.state_change.elapsed() > self.inner.opts.gossip_to_the_dead_time,
-          _ => true,
+        Some(|n: &LocalNodeState| {
+          if n.id().name == self.inner.opts.name {
+            return true;
+          }
+
+          match n.state {
+            NodeState::Alive | NodeState::Suspect => false,
+            NodeState::Dead => n.state_change.elapsed() > self.inner.opts.gossip_to_the_dead_time,
+            _ => true,
+          }
         }),
       )
     };
@@ -1236,7 +1246,7 @@ where
     // Compute the bytes available
     let mut bytes_avail = self.inner.opts.packet_buffer_size
       - COMPOUND_HEADER_OVERHEAD
-      - Label::label_overhead(&self.inner.opts.label);
+      - self.inner.opts.label.label_overhead();
 
     if self.encryption_enabled().await {
       bytes_avail = bytes_avail.saturating_sub(encrypt_overhead(self.inner.opts.encryption_algo));
@@ -1286,7 +1296,9 @@ where
       random_nodes(
         1,
         &memberlist,
-        Some(|n: &LocalNodeState| n.state != NodeState::Alive),
+        Some(|n: &LocalNodeState| {
+          n.id().name == self.inner.opts.name || n.state != NodeState::Alive
+        }),
       )
     };
 

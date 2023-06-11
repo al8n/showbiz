@@ -24,6 +24,11 @@ fn make_label_header(label: &[u8], src: &[u8]) -> Bytes {
 pub struct Label(Bytes);
 
 impl Label {
+  #[inline]
+  pub(crate) const fn empty() -> Label {
+    Label(Bytes::new())
+  }
+
   /// Rrefixes outgoing packets with the correct header if
   /// the label is not empty.
   pub fn add_label_header_to_packet(src: &[u8], label: &[u8]) -> Result<Bytes, EncodeError> {
@@ -39,16 +44,16 @@ impl Label {
     }
   }
 
-  pub fn remove_label_header_from(mut buf: BytesMut) -> Result<(BytesMut, Bytes), DecodeError> {
+  pub fn remove_label_header_from(mut buf: BytesMut) -> Result<(BytesMut, Label), DecodeError> {
     #[allow(clippy::declare_interior_mutable_const)]
-    const EMPTY_BYTES: Bytes = Bytes::new();
+    const EMPTY_LABEL: Label = Label::empty();
 
     if buf.is_empty() {
-      return Ok((buf, EMPTY_BYTES));
+      return Ok((buf, EMPTY_LABEL));
     }
 
     if buf[0] != MessageType::HasLabel as u8 {
-      return Ok((buf, EMPTY_BYTES));
+      return Ok((buf, EMPTY_LABEL));
     }
 
     if buf.len() < 2 {
@@ -66,7 +71,9 @@ impl Label {
 
     buf.advance(2);
     let label = buf.split_to(label_size);
-    Ok((buf, label.freeze()))
+    Label::from_bytes(label.freeze())
+      .map(|label| (buf, label))
+      .map_err(From::from)
   }
 
   pub fn remove_label_header_from_packet(mut buf: Bytes) -> Result<(Bytes, Bytes), DecodeError> {
@@ -100,11 +107,11 @@ impl Label {
   }
 
   #[inline]
-  pub(crate) const fn label_overhead(label: &[u8]) -> usize {
-    if label.is_empty() {
+  pub(crate) fn label_overhead(&self) -> usize {
+    if self.is_empty() {
       0
     } else {
-      2 + label.len()
+      2 + self.len()
     }
   }
 
@@ -134,58 +141,6 @@ impl Label {
     match core::str::from_utf8(&s) {
       Ok(_) => Ok(Self(s)),
       Err(e) => Err(e.into()),
-    }
-  }
-
-  #[inline]
-  pub(crate) fn from_slice(s: &[u8]) -> Result<Self, InvalidLabel> {
-    if s.len() > Self::MAX_SIZE || s.is_empty() {
-      return Err(InvalidLabel::InvalidSize(s.len()));
-    }
-    match core::str::from_utf8(s) {
-      Ok(s) => Ok(Self(Bytes::copy_from_slice(s.as_bytes()))),
-      Err(e) => Err(e.into()),
-    }
-  }
-
-  #[inline]
-  pub(crate) fn from_array<const N: usize>(s: [u8; N]) -> Result<Self, InvalidLabel> {
-    if s.len() > Self::MAX_SIZE || s.is_empty() {
-      return Err(InvalidLabel::InvalidSize(s.len()));
-    }
-    match core::str::from_utf8(&s) {
-      Ok(_) => Ok(Self(Bytes::copy_from_slice(&s))),
-      Err(e) => Err(e.into()),
-    }
-  }
-
-  #[inline]
-  pub(crate) fn encoded_len(&self) -> usize {
-    core::mem::size_of::<u8>() + self.0.len()
-  }
-
-  #[inline]
-  pub(crate) fn encode_to(&self, buf: &mut BytesMut) {
-    buf.put_u8(self.0.len() as u8);
-    buf.put(self.0.as_ref());
-  }
-
-  #[inline]
-  pub(crate) fn decode_len(mut buf: impl Buf) -> Result<usize, DecodeError> {
-    if buf.remaining() < core::mem::size_of::<u8>() {
-      return Err(DecodeError::Truncated("label"));
-    }
-    Ok(buf.get_u8() as usize)
-  }
-
-  #[inline]
-  pub(crate) fn decode_from(buf: Bytes) -> Result<Self, DecodeError> {
-    if buf.remaining() == 0 {
-      return Err(DecodeError::Truncated("label"));
-    }
-    match core::str::from_utf8(buf.as_ref()) {
-      Ok(_) => Ok(Self(buf)),
-      Err(e) => Err(DecodeError::InvalidLabel(InvalidLabel::Utf8(e))),
     }
   }
 }

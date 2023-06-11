@@ -209,7 +209,7 @@ impl<D: Delegate, T: Transport, S: Spawner> Showbiz<D, T, S> {
   async fn encrypt_local_state(
     keyring: &SecretKeyring,
     msg: &[u8],
-    label: &[u8],
+    label: &Label,
     algo: EncryptionAlgo,
   ) -> Result<Bytes, Error<D, T>> {
     let enc_len = encrypted_length(algo, msg.len());
@@ -238,7 +238,7 @@ impl<D: Delegate, T: Transport, S: Spawner> Showbiz<D, T, S> {
         })
         .map_err(From::from)
     } else {
-      let data_bytes = append_bytes(&buf, label);
+      let data_bytes = append_bytes(&buf, label.as_bytes());
       // Write the encrypted cipher text to the buffer
       keyring
         .encrypt_payload(algo, msg, &data_bytes, &mut ciphertext)
@@ -253,7 +253,7 @@ impl<D: Delegate, T: Transport, S: Spawner> Showbiz<D, T, S> {
 
   async fn decrypt_remote_state(
     r: &mut ReliableConnection<T>,
-    stream_label: &[u8],
+    stream_label: &Label,
     keyring: &SecretKeyring,
     metrics_labels: &[metrics::Label],
   ) -> Result<Bytes, Error<D, T>> {
@@ -311,7 +311,7 @@ impl<D: Delegate, T: Transport, S: Spawner> Showbiz<D, T, S> {
         })
         .map_err(From::from)
     } else {
-      let data_bytes = append_bytes(&buf, stream_label);
+      let data_bytes = append_bytes(&buf, stream_label.as_bytes());
       // Decrypt the payload
       keyring
         .decrypt_payload(&mut ciphertext, data_bytes.as_ref())

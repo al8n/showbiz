@@ -71,7 +71,7 @@ where
         if let Err(e) = decrypt_payload(
           &keys.keys(),
           &mut buf,
-          &packet_label,
+          packet_label.as_bytes(),
           self.inner.opts.encryption_algo,
         ) {
           if self.inner.opts.gossip_verify_incoming {
@@ -252,7 +252,7 @@ where
     };
 
     // If node is provided, verify that it is for us
-    if &p.target != &self.inner.id {
+    if p.target.name != self.inner.opts.name {
       tracing::error!(target = "showbiz", local=%self.inner.id, remote = %from, "got ping for unexpected node '{}'", p.target);
       return;
     }
@@ -418,7 +418,7 @@ where
     let bytes_avail = self.inner.opts.packet_buffer_size
       - msg.len()
       - COMPOUND_HEADER_OVERHEAD
-      - Label::label_overhead(&self.inner.opts.label);
+      - self.inner.opts.label.label_overhead();
 
     let mut msgs = self
       .get_broadcast_with_prepend(vec![msg], COMPOUND_OVERHEAD, bytes_avail)
@@ -476,7 +476,7 @@ where
           return Err(err);
         };
 
-        if let Err(e) = keyring.encrypt_to(pk, &nonce, &self.inner.opts.label, &mut bytes)
+        if let Err(e) = keyring.encrypt_to(pk, &nonce, self.inner.opts.label.as_bytes(), &mut bytes)
           .map(|_| {
             buf.unsplit(bytes);
           }) {

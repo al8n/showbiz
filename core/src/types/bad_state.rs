@@ -10,6 +10,7 @@ macro_rules! bad_bail {
       from: NodeId,
     }
 
+    #[allow(dead_code)]
     impl $name {
       #[inline]
       pub(crate) fn encoded_len(&self) -> usize {
@@ -85,6 +86,6 @@ bad_bail!(Dead);
 impl Dead {
   #[inline]
   pub(crate) fn dead_self(&self) -> bool {
-    self.node == self.from
+    self.node.name == self.from.name
   }
 }

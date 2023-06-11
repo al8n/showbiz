@@ -2,7 +2,7 @@ use super::*;
 
 macro_rules! bail_ping {
   ($name: ident) => {
-    #[viewit::viewit]
+    #[viewit::viewit(getters(skip), setters(skip))]
     #[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
     pub(crate) struct $name {
       seq_no: u32,

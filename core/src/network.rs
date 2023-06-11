@@ -23,9 +23,6 @@ pub(crate) const COMPOUND_OVERHEAD: usize = 2;
 
 pub(crate) const USER_MSG_OVERHEAD: usize = 1;
 
-/// Warn if a UDP packet takes this long to process
-const BLOCKING_WARNING: Duration = Duration::from_millis(10);
-
 const MAX_PUSH_STATE_BYTES: usize = 20 * 1024 * 1024;
 /// Maximum number of concurrent push/pull requests
 const MAX_PUSH_PULL_REQUESTS: u32 = 128;

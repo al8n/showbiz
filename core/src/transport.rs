@@ -5,7 +5,9 @@ use std::{
 
 use crate::{
   dns::DnsError,
-  types::{DecodeError, DecodeU32Error, EncodeError, InvalidLabel, MessageType, NodeId, Packet},
+  types::{
+    DecodeError, DecodeU32Error, EncodeError, InvalidLabel, Label, MessageType, NodeId, Packet,
+  },
 };
 
 use bytes::{BufMut, Bytes, BytesMut};
@@ -97,6 +99,7 @@ impl std::error::Error for ConnectionError {
 
 impl ConnectionError {
   fn failed_remote(&self) -> bool {
+    #[allow(clippy::match_like_matches_macro)]
     match self.kind {
       ConnectionKind::Reliable => match self.error_kind {
         ConnectionErrorKind::Read | ConnectionErrorKind::Write | ConnectionErrorKind::Dial => true,
@@ -150,12 +153,12 @@ mod r#async {
   use super::*;
   use async_channel::Receiver;
   use futures_util::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
-  
 
   macro_rules! connection_bail {
     (impl $ass:ident => $ident:ident<$kind:ident>) => {
       pub struct $ident<T: Transport>(BufReader<T::$ass>);
 
+      #[allow(dead_code)]
       impl<T> $ident<T>
       where
         T: Transport,
@@ -298,17 +301,17 @@ mod r#async {
 
         /// Removes any label header from the beginning of
         /// the stream if present and returns it.
-        pub async fn remove_label_header(&mut self) -> Result<Bytes, TransportError<T>> {
+        pub async fn remove_label_header(&mut self) -> Result<Label, TransportError<T>> {
           let buf = match self.0.fill_buf().await {
             Ok(buf) => {
               if buf.is_empty() {
-                return Ok(Bytes::new());
+                return Ok(Label::empty());
               }
               buf
             }
             Err(e) => {
               return if e.kind() == std::io::ErrorKind::UnexpectedEof {
-                Ok(Bytes::new())
+                Ok(Label::empty())
               } else {
                 Err(TransportError::Connection(ConnectionError {
                   kind: ConnectionKind::$kind,
@@ -322,7 +325,7 @@ mod r#async {
           // First check for the type byte.
           match MessageType::try_from(buf[0]) {
             Ok(MessageType::HasLabel) => {}
-            Ok(_) => return Ok(Bytes::new()),
+            Ok(_) => return Ok(Label::empty()),
             Err(e) => return Err(TransportError::Decode(DecodeError::InvalidMessageType(e))),
           }
 
@@ -342,7 +345,8 @@ mod r#async {
 
           let label = Bytes::copy_from_slice(&buf[2..2 + label_size]);
           self.0.consume_unpin(2 + label_size);
-          Ok(label)
+
+          Label::from_bytes(label).map_err(|e| TransportError::Decode(DecodeError::InvalidLabel(e)))
         }
       }
     };

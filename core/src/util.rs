@@ -10,7 +10,7 @@ const LZW_LIT_WIDTH: u8 = 8;
 #[derive(Debug, thiserror::Error)]
 pub enum CompressionError {
   #[error("{0}")]
-  LZW(#[from] weezl::LzwError),
+  Lzw(#[from] weezl::LzwError),
 }
 
 #[inline]
@@ -19,9 +19,9 @@ pub(crate) fn decompress_buffer(
   data: &[u8],
 ) -> Result<Vec<u8>, CompressionError> {
   match cmp {
-    CompressionAlgo::LZW => weezl::decode::Decoder::new(weezl::BitOrder::Lsb, LZW_LIT_WIDTH)
+    CompressionAlgo::Lzw => weezl::decode::Decoder::new(weezl::BitOrder::Lsb, LZW_LIT_WIDTH)
       .decode(data)
-      .map_err(CompressionError::LZW),
+      .map_err(CompressionError::Lzw),
     CompressionAlgo::None => unreachable!(),
   }
 }
@@ -32,7 +32,7 @@ pub(crate) fn compress_payload(
   inp: &[u8],
 ) -> Result<Vec<u8>, CompressionError> {
   match cmp {
-    CompressionAlgo::LZW => weezl::encode::Encoder::new(weezl::BitOrder::Lsb, LZW_LIT_WIDTH)
+    CompressionAlgo::Lzw => weezl::encode::Encoder::new(weezl::BitOrder::Lsb, LZW_LIT_WIDTH)
       .encode(inp)
       .map_err(Into::into),
     CompressionAlgo::None => unreachable!(),
@@ -45,7 +45,7 @@ pub(crate) fn decompress_payload(
   inp: &[u8],
 ) -> Result<Vec<u8>, CompressionError> {
   match cmp {
-    CompressionAlgo::LZW => weezl::decode::Decoder::new(weezl::BitOrder::Lsb, LZW_LIT_WIDTH)
+    CompressionAlgo::Lzw => weezl::decode::Decoder::new(weezl::BitOrder::Lsb, LZW_LIT_WIDTH)
       .decode(inp)
       .map_err(Into::into),
     CompressionAlgo::None => unreachable!(),

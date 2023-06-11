@@ -101,24 +101,6 @@ where
 impl<D, T, S> Showbiz<D, T, S>
 where
   T: Transport,
-  D: Delegate,
-  S: Spawner,
-{
-  #[inline]
-  fn ip_must_be_checked(&self) -> bool {
-    self
-      .inner
-      .opts
-      .allowed_cidrs
-      .as_ref()
-      .map(|x| !x.is_empty())
-      .unwrap_or(false)
-  }
-}
-
-impl<D, T, S> Showbiz<D, T, S>
-where
-  T: Transport,
   S: Spawner,
   D: Delegate,
 {
@@ -712,8 +694,8 @@ where
   }
 
   pub(crate) async fn verify_protocol(&self, _remote: &[PushNodeState]) -> Result<(), Error<D, T>> {
-    // TODO: implement
-
+    // TODO: now we do not need to handle this situation, because there is no update
+    // on protocol.
     Ok(())
   }
 

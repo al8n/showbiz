@@ -39,28 +39,6 @@ impl Name {
   }
 
   #[inline]
-  pub(crate) fn from_slice(s: &[u8]) -> Result<Self, InvalidName> {
-    if s.len() > Self::MAX_SIZE {
-      return Err(InvalidName::TooLarge(s.len()));
-    }
-    match core::str::from_utf8(s) {
-      Ok(s) => Ok(Self(Bytes::copy_from_slice(s.as_bytes()))),
-      Err(e) => Err(e.into()),
-    }
-  }
-
-  #[inline]
-  pub(crate) fn from_array<const N: usize>(s: [u8; N]) -> Result<Self, InvalidName> {
-    if s.len() > Self::MAX_SIZE {
-      return Err(InvalidName::TooLarge(s.len()));
-    }
-    match core::str::from_utf8(&s) {
-      Ok(_) => Ok(Self(Bytes::copy_from_slice(&s))),
-      Err(e) => Err(e.into()),
-    }
-  }
-
-  #[inline]
   pub(crate) fn encoded_len(&self) -> usize {
     core::mem::size_of::<u16>() + self.0.len()
   }

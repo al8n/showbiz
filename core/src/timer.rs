@@ -7,6 +7,7 @@ use futures_util::{
 use std::time::Duration;
 
 pub(crate) struct Timer {
+  #[allow(dead_code)]
   fut: oneshot::Receiver<()>,
   cancel: oneshot::Sender<()>,
 }

@@ -5,13 +5,11 @@ use std::{
   time::Duration,
 };
 
-use bytes::Bytes;
-
 use super::{
   keyring::SecretKey,
   security::EncryptionAlgo,
   transport::Transport,
-  types::{CompressionAlgo, Name},
+  types::{CompressionAlgo, Label, Name},
   version::{DelegateVersion, ProtocolVersion, VSN_SIZE},
 };
 
@@ -28,7 +26,7 @@ pub struct Options<T: Transport> {
   /// If gossip encryption is enabled and this is set it is treated as GCM
   /// authenticated data.
   #[viewit(getter(const, style = "ref"))]
-  label: Bytes,
+  label: Label,
 
   /// Skips the check that inbound packets and gossip
   /// streams need to be label prefixed.
@@ -276,7 +274,7 @@ impl<T: Transport> Options<T> {
 
     Self {
       name: hostname,
-      label: Default::default(),
+      label: Label::empty(),
       skip_inbound_label_check: false,
       bind_addr: SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), 7946)),
       advertise_addr: None,
@@ -296,7 +294,7 @@ impl<T: Transport> Options<T> {
       gossip_to_the_dead_time: Duration::from_secs(30), // same as push/pull
       gossip_verify_incoming: true,
       gossip_verify_outgoing: true,
-      compression_algo: CompressionAlgo::LZW, // Enable compression by default
+      compression_algo: CompressionAlgo::Lzw, // Enable compression by default
       secret_key: None,
       delegate_version: DelegateVersion::V0,
       protocol_version: ProtocolVersion::V0,

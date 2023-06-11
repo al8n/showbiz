@@ -127,14 +127,6 @@ pub enum DecodeError {
   FailReadRemoteState(usize, usize),
   #[error("failed to read full user state ({0} / {1})")]
   FailReadUserState(usize, usize),
-  #[error("{0}")]
-  Other(String),
-}
-
-impl DecodeError {
-  pub(crate) fn other(s: impl core::fmt::Display) -> Self {
-    Self::Other(format!("{s}"))
-  }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -806,48 +798,6 @@ pub struct RemoteNode {
   pub name: Option<Name>,
   pub addr: IpAddr,
   pub port: Option<u16>,
-}
-
-impl RemoteNode {
-  /// Construct a new remote node identifier with the given ip addr.
-  #[inline]
-  pub const fn new(addr: IpAddr) -> Self {
-    Self {
-      name: None,
-      addr,
-      port: None,
-    }
-  }
-
-  /// With the given name
-  #[inline]
-  pub fn with_name(mut self, name: Option<Name>) -> Self {
-    self.name = name;
-    self
-  }
-
-  /// With the given port
-  #[inline]
-  pub fn with_port(mut self, port: Option<u16>) -> Self {
-    self.port = port;
-    self
-  }
-
-  /// Return the node name
-  #[inline]
-  pub const fn name(&self) -> Option<&Name> {
-    self.name.as_ref()
-  }
-
-  #[inline]
-  pub const fn ip(&self) -> IpAddr {
-    self.addr
-  }
-
-  #[inline]
-  pub const fn port(&self) -> Option<u16> {
-    self.port
-  }
 }
 
 /// Represents a node in the cluster
