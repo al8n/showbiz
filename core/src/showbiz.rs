@@ -5,6 +5,8 @@ use std::{
   time::Instant,
 };
 
+use atomic::Atomic;
+
 #[cfg(feature = "async")]
 use async_lock::{Mutex, RwLock};
 use bytes::Bytes;
@@ -40,13 +42,21 @@ mod r#async;
 #[cfg(feature = "async")]
 pub use r#async::*;
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub(crate) enum Status {
+  Fresh,
+  Running,
+  Left,
+  Shutdown,
+}
+
 #[viewit::viewit]
 pub(crate) struct HotData {
   sequence_num: CachePadded<AtomicU32>,
   incarnation: CachePadded<AtomicU32>,
   push_pull_req: CachePadded<AtomicU32>,
-  shutdown: CachePadded<AtomicU32>,
-  leave: CachePadded<AtomicU32>,
+  status: CachePadded<Atomic<Status>>,
   num_nodes: Arc<CachePadded<AtomicU32>>,
 }
 
@@ -57,8 +67,7 @@ impl HotData {
       incarnation: CachePadded::new(AtomicU32::new(0)),
       num_nodes: Arc::new(CachePadded::new(AtomicU32::new(0))),
       push_pull_req: CachePadded::new(AtomicU32::new(0)),
-      shutdown: CachePadded::new(AtomicU32::new(0)),
-      leave: CachePadded::new(AtomicU32::new(0)),
+      status: CachePadded::new(Atomic::new(Status::Fresh)),
     }
   }
 }

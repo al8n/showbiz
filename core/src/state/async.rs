@@ -86,7 +86,7 @@ where
   /// Initiates a ping to the node with the specified node.
   pub async fn ping(&self, node: NodeId) -> Result<Duration, Error<D, T>> {
     // Prepare a ping message and setup an ack handler.
-    let self_addr = self.get_advertise().await;
+    let self_addr = self.get_advertise();
     let ping = Ping {
       seq_no: self.next_seq_no(),
       source: NodeId {
@@ -144,10 +144,6 @@ where
   D: Delegate,
   S: Spawner,
 {
-  /// Used to stop the background maintenance. This is safe
-  /// to call multiple times.
-  pub(crate) async fn deschedule(&self) {}
-
   /// Does a complete state exchange with a specific node.
   pub(crate) async fn push_pull_node(&self, addr: &NodeId, join: bool) -> Result<(), Error<D, T>> {
     #[cfg(feature = "metrics")]
@@ -189,7 +185,7 @@ where
     // Check if this is us
     if d.dead_self() {
       // If we are not leaving we need to refute
-      if !self.has_left() {
+      if !self.is_left() {
         // self.refute().await?;
         tracing::warn!(
           target = "showbiz",
@@ -402,7 +398,7 @@ where
     // in-queue to be processed but blocked by the locks above. If we let
     // that aliveMsg process, it'll cause us to re-join the cluster. This
     // ensures that we don't.
-    if self.has_left() && alive.node == self.inner.id {
+    if self.is_left() && alive.node == self.inner.id {
       return;
     }
 
@@ -859,7 +855,7 @@ where
     }
 
     // Prepare a ping message and setup an ack handler.
-    let self_addr = self.get_advertise().await;
+    let self_addr = self.get_advertise();
     let ping = Ping {
       seq_no: self.next_seq_no(),
       source: NodeId {

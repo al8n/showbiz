@@ -188,7 +188,7 @@ impl Delegate for VoidDelegate {
   /// Used to retrieve meta-data about the current node
   /// when broadcasting an alive message. It's length is limited to
   /// the given byte size. This metadata is available in the Node structure.
-  fn node_meta(&self, limit: usize) -> Bytes {
+  fn node_meta(&self, _limit: usize) -> Bytes {
     Bytes::new()
   }
 
@@ -197,7 +197,7 @@ impl Delegate for VoidDelegate {
   /// so would block the entire UDP packet receive loop. Additionally, the byte
   /// slice may be modified after the call returns, so it should be copied if needed
   #[cfg(not(feature = "async"))]
-  fn notify_user_msg(&self, msg: Bytes) -> Result<(), Self::Error> {
+  fn notify_user_msg(&self, _msg: Bytes) -> Result<(), Self::Error> {
     Ok(())
   }
 
@@ -206,7 +206,7 @@ impl Delegate for VoidDelegate {
   /// so would block the entire UDP packet receive loop. Additionally, the byte
   /// slice may be modified after the call returns, so it should be copied if needed
   #[cfg(feature = "async")]
-  async fn notify_user_msg(&self, msg: Bytes) -> Result<(), Self::Error> {
+  async fn notify_user_msg(&self, _msg: Bytes) -> Result<(), Self::Error> {
     Ok(())
   }
 
@@ -219,8 +219,8 @@ impl Delegate for VoidDelegate {
   #[cfg(feature = "async")]
   async fn get_broadcasts(
     &self,
-    overhead: usize,
-    limit: usize,
+    _overhead: usize,
+    _limit: usize,
   ) -> Result<Vec<Message>, Self::Error> {
     Ok(Vec::new())
   }
@@ -232,7 +232,7 @@ impl Delegate for VoidDelegate {
   /// the limit. Care should be taken that this method does not block,
   /// since doing so would block the entire UDP packet receive loop.
   #[cfg(not(feature = "async"))]
-  fn get_broadcasts(&self, overhead: usize, limit: usize) -> Result<Vec<Message>, Self::Error> {
+  fn get_broadcasts(&self, _overhead: usize, _limit: usize) -> Result<Vec<Message>, Self::Error> {
     Ok(Vec::new())
   }
 
@@ -241,7 +241,7 @@ impl Delegate for VoidDelegate {
   /// data can be sent here. See MergeRemoteState as well. The `join`
   /// boolean indicates this is for a join instead of a push/pull.
   #[cfg(feature = "async")]
-  async fn local_state(&self, join: bool) -> Result<Bytes, Self::Error> {
+  async fn local_state(&self, _join: bool) -> Result<Bytes, Self::Error> {
     Ok(Bytes::new())
   }
 
@@ -250,7 +250,7 @@ impl Delegate for VoidDelegate {
   /// data can be sent here. See MergeRemoteState as well. The `join`
   /// boolean indicates this is for a join instead of a push/pull.
   #[cfg(not(feature = "async"))]
-  fn local_state(&self, join: bool) -> Result<Bytes, Self::Error> {
+  fn local_state(&self, _join: bool) -> Result<Bytes, Self::Error> {
     Ok(Bytes::new())
   }
 
@@ -259,7 +259,7 @@ impl Delegate for VoidDelegate {
   /// remote side's LocalState call. The 'join'
   /// boolean indicates this is for a join instead of a push/pull.
   #[cfg(feature = "async")]
-  async fn merge_remote_state(&self, buf: Bytes, join: bool) -> Result<(), Self::Error> {
+  async fn merge_remote_state(&self, _buf: Bytes, _join: bool) -> Result<(), Self::Error> {
     Ok(())
   }
 
@@ -268,63 +268,63 @@ impl Delegate for VoidDelegate {
   /// remote side's LocalState call. The 'join'
   /// boolean indicates this is for a join instead of a push/pull.
   #[cfg(not(feature = "async"))]
-  fn merge_remote_state(&self, buf: Bytes, join: bool) -> Result<(), Self::Error> {
+  fn merge_remote_state(&self, _buf: Bytes, _join: bool) -> Result<(), Self::Error> {
     Ok(())
   }
 
   /// Invoked when a node is detected to have joined the cluster
   #[cfg(not(feature = "async"))]
-  fn notify_join(&self, node: Arc<Node>) -> Result<(), Self::Error> {
+  fn notify_join(&self, _node: Arc<Node>) -> Result<(), Self::Error> {
     Ok(())
   }
 
   /// Invoked when a node is detected to have joined the cluster
   #[cfg(feature = "async")]
-  async fn notify_join(&self, node: Arc<Node>) -> Result<(), Self::Error> {
+  async fn notify_join(&self, _node: Arc<Node>) -> Result<(), Self::Error> {
     Ok(())
   }
 
   /// Invoked when a node is detected to have left the cluster
   #[cfg(not(feature = "async"))]
-  fn notify_leave(&self, node: Arc<Node>) -> Result<(), Self::Error> {
+  fn notify_leave(&self, _node: Arc<Node>) -> Result<(), Self::Error> {
     Ok(())
   }
 
   /// Invoked when a node is detected to have left the cluster
   #[cfg(feature = "async")]
-  async fn notify_leave(&self, node: Arc<Node>) -> Result<(), Self::Error> {
+  async fn notify_leave(&self, _node: Arc<Node>) -> Result<(), Self::Error> {
     Ok(())
   }
 
   /// Invoked when a node is detected to have
   /// updated, usually involving the meta data.
   #[cfg(not(feature = "async"))]
-  fn notify_update(&self, node: Arc<Node>) -> Result<(), Self::Error> {
+  fn notify_update(&self, _node: Arc<Node>) -> Result<(), Self::Error> {
     Ok(())
   }
 
   /// Invoked when a node is detected to have
   /// updated, usually involving the meta data.
   #[cfg(feature = "async")]
-  async fn notify_update(&self, node: Arc<Node>) -> Result<(), Self::Error> {
+  async fn notify_update(&self, _node: Arc<Node>) -> Result<(), Self::Error> {
     Ok(())
   }
 
   /// Invoked when a name conflict is detected
   #[cfg(not(feature = "async"))]
-  fn notify_alive(&self, peer: Arc<Node>) -> Result<(), Self::Error> {
+  fn notify_alive(&self, _peer: Arc<Node>) -> Result<(), Self::Error> {
     Ok(())
   }
 
   /// Invoked when a name conflict is detected
   #[cfg(feature = "async")]
-  async fn notify_alive(&self, peer: Arc<Node>) -> Result<(), Self::Error> {
+  async fn notify_alive(&self, _peer: Arc<Node>) -> Result<(), Self::Error> {
     Ok(())
   }
 
   /// Invoked when a name conflict is detected
   #[cfg(not(feature = "async"))]
-  fn notify_conflict(&self, existing: Arc<Node>, other: Arc<Node>) -> Result<(), Self::Error> {
+  fn notify_conflict(&self, _existing: Arc<Node>, _other: Arc<Node>) -> Result<(), Self::Error> {
     Ok(())
   }
 
@@ -332,8 +332,8 @@ impl Delegate for VoidDelegate {
   #[cfg(feature = "async")]
   async fn notify_conflict(
     &self,
-    existing: Arc<Node>,
-    other: Arc<Node>,
+    _existing: Arc<Node>,
+    _other: Arc<Node>,
   ) -> Result<(), Self::Error> {
     Ok(())
   }
@@ -341,14 +341,14 @@ impl Delegate for VoidDelegate {
   /// Invoked when a merge could take place.
   /// Provides a list of the nodes known by the peer.
   #[cfg(not(feature = "async"))]
-  fn notify_merge(&self, peers: Vec<Node>) -> Result<(), Self::Error> {
+  fn notify_merge(&self, _peers: Vec<Node>) -> Result<(), Self::Error> {
     Ok(())
   }
 
   /// Invoked when a merge could take place.
   /// Provides a list of the nodes known by the peer.
   #[cfg(feature = "async")]
-  async fn notify_merge(&self, peers: Vec<Node>) -> Result<(), Self::Error> {
+  async fn notify_merge(&self, _peers: Vec<Node>) -> Result<(), Self::Error> {
     Ok(())
   }
 
@@ -368,9 +368,9 @@ impl Delegate for VoidDelegate {
   #[cfg(not(feature = "async"))]
   fn notify_ping_complete(
     &self,
-    node: Arc<Node>,
-    rtt: std::time::Duration,
-    payload: Bytes,
+    _node: Arc<Node>,
+    _rtt: std::time::Duration,
+    _payload: Bytes,
   ) -> Result<(), Self::Error> {
     Ok(())
   }
@@ -379,15 +379,15 @@ impl Delegate for VoidDelegate {
   #[cfg(feature = "async")]
   async fn notify_ping_complete(
     &self,
-    node: Arc<Node>,
-    rtt: std::time::Duration,
-    payload: Bytes,
+    _node: Arc<Node>,
+    _rtt: std::time::Duration,
+    _payload: Bytes,
   ) -> Result<(), Self::Error> {
     Ok(())
   }
 
   #[inline]
-  fn disable_reliable_pings(&self, node: &NodeId) -> bool {
+  fn disable_reliable_pings(&self, _node: &NodeId) -> bool {
     false
   }
 }

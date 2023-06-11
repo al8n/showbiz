@@ -2,7 +2,7 @@ use super::*;
 
 macro_rules! bad_bail {
   ($name: ident) => {
-    #[viewit::viewit]
+    #[viewit::viewit(getters(skip), setters(skip))]
     #[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
     pub(crate) struct $name {
       incarnation: u32,
@@ -42,7 +42,7 @@ macro_rules! bad_bail {
       }
 
       #[inline]
-      pub(crate) fn decode_len(mut buf: impl Buf) -> Result<usize, DecodeError> {
+      pub(crate) fn decode_len(buf: impl Buf) -> Result<usize, DecodeError> {
         decode_u32_from_buf(buf).map(|(len, _)| len as usize).map_err(From::from)
       }
 

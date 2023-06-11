@@ -1,62 +1,4 @@
-//! Types used by the protocol.
-//!
-//! The encoding and decoding rules are similar to protobuf
-//! e.g. For a struct, the root struct stores the length of each field.
-//!
-//! ```rust,no_compile
-//! struct Name(Bytes);
-//!
-//! struct NodeId {
-//!   name: Name,
-//!   addr: NodeAddress,
-//!   port: Option<u16>,
-//! }
-//!
-//! struct Foo {
-//!   seq_no: u32,
-//!   from: NodeId,
-//!   to: NodeId,
-//! }
-//! ```
-//!
-//! In the above example, `Name` is a 'atomic' type, which means it only contains one field.
-//! For 'atomic' types, when encoding, they will only contains the data itself, no length information.
-//! So, the encoded data for `Name` is just the bytes of the name, and the length is just `Name::len(self)`.
-//!
-//! Now, let us look the NodeId. It contains 3 fields, `name`, `addr` and `port`.
-//! The encoded data format for `NodeId` is:
-//!
-//! Let us say the tag for name is 0, the tag for addr may be [1, 2, 3], represent for the 3 kinds of addr: ipv4, ipv6 and domain (e.g. www.example.com). the port tag is 4.
-//!
-//! If the all fields are not empty:
-//!
-//! ```text
-//! name field tag (u8), name_length (u16), name, addr, port tag(u8), port, checksum (u32)
-//! ```
-//!
-//! If the a field is empty, then the tag and the length of the field will not be included in the encoded data.
-//!
-//! ```text
-//! addr tag (u8), addr length (u8), addr data, checksum (u32)
-//! ```
-//!
-//! So now, the problem is that how we decode the `NodeId`?
-//!
-//! We requires the caller to provide the length information.
-//!
-//! Let say we have a decode funtion like `decode_node_id(buf: Bytes) -> Result<NodeId, Error>`.
-//!
-//! then we read the first byte as the tag, and then we match the tag to the field. If the num of readed bytes is equal to the length,
-//! then we know that the we have all the data for the struct.
-//!
-//! The encoded data format for `Foo` is:
-//!
-//! ```text
-//! seq_no, from_length (u32 varint), from, to_length(u32 varint), to
-//! ```
-
 use std::{
-  io::{Error, ErrorKind},
   net::{IpAddr, SocketAddr},
   ops::{Deref, DerefMut},
   time::Instant,
@@ -69,41 +11,11 @@ use crate::version::{VSN_EMPTY, VSN_SIZE};
 
 const CHECKSUM_SIZE: usize = core::mem::size_of::<u32>();
 
-macro_rules! map_inlined {
-  (match $ident: ident.$len: ident() {
-    $($size: literal),* $(,)?
-  } => $r: ident) => {
-    match $len {
-      $($size => {
-        let mut arr = [0; $size];
-        $r.read_exact(&mut arr).await?;
-        $ident::from_array(arr).map_err(|e| Error::new(ErrorKind::InvalidData, e))
-      },)*
-      _ => unreachable!(),
-    }
-  };
-}
-
 /// Returns the encoded length of the value in LEB128 variable length format.
 /// The returned value will be between 1 and 5, inclusive.
 #[inline]
 pub(crate) fn encoded_u32_len(value: u32) -> usize {
   ((((value | 1).leading_zeros() ^ 31) * 9 + 37) / 32) as usize
-}
-
-#[inline]
-pub(crate) fn encode_u32(mut n: u32) -> (usize, [u8; 5]) {
-  let mut buf = [0u8; 5];
-  let mut i = 0;
-
-  while n >= 0x80 {
-    buf[i] = ((n as u8) & 0x7f) | 0x80;
-    n >>= 7;
-    i += 1;
-  }
-
-  buf[i] = n as u8;
-  (i, buf)
 }
 
 #[inline]
@@ -146,55 +58,6 @@ pub(crate) fn decode_u32_from_buf(mut buf: impl Buf) -> Result<(u32, usize), Dec
   }
 
   Err(DecodeU32Error)
-}
-
-#[cfg(feature = "async")]
-pub(crate) async fn decode_u32_from_reader<R: futures_util::io::AsyncRead + Unpin>(
-  reader: &mut R,
-) -> std::io::Result<(u32, usize)> {
-  use futures_util::io::AsyncReadExt;
-
-  let mut n = 0;
-  let mut shift = 0;
-  for i in 0..5 {
-    let mut byte = [0; 1];
-    reader.read_exact(&mut byte).await?;
-    let b = byte[0];
-
-    if b < 0x80 {
-      return Ok((n | ((b as u32) << shift), i));
-    }
-
-    n |= ((b & 0x7f) as u32) << shift;
-    shift += 7;
-  }
-
-  Err(Error::new(ErrorKind::InvalidData, "invalid u32"))
-}
-
-#[inline]
-const fn socket_addr_encoded_len(addr: &SocketAddr) -> usize {
-  // format is: ip + port
-  match addr {
-    SocketAddr::V4(_) => 4 + 2,
-    SocketAddr::V6(_) => 16 + 2,
-  }
-}
-
-#[inline]
-fn encode_socket_addr_to(addr: &SocketAddr, mut buf: impl BufMut) {
-  match addr {
-    SocketAddr::V4(addr) => {
-      buf.put_u8(0);
-      buf.put_slice(&addr.ip().octets());
-      buf.put_u16(addr.port());
-    }
-    SocketAddr::V6(addr) => {
-      buf.put_u8(1);
-      buf.put_slice(&addr.ip().octets());
-      buf.put_u16(addr.port());
-    }
-  }
 }
 
 mod compress;

@@ -39,6 +39,7 @@ futures-util = { version = "0.3", optional = true, features = ["io"] }
 pin-project-lite = { version = "0.2", optional = true }
 
 # common
+atomic = "0.5"
 arc-swap = "1.6"
 aead = { version = "0.5", features = ["bytes"] }
 aes-gcm = "0.10"

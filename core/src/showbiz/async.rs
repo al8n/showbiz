@@ -1,9 +1,4 @@
-use std::{
-  future::Future,
-  net::ToSocketAddrs,
-  sync::atomic::{AtomicU8, Ordering},
-  time::Duration,
-};
+use std::{future::Future, net::ToSocketAddrs, sync::atomic::Ordering, time::Duration};
 
 use crate::{
   dns::{AsyncRuntimeProvider, DnsError},
@@ -20,6 +15,8 @@ use futures_util::{future::BoxFuture, FutureExt};
 #[viewit::viewit(getters(skip), setters(skip))]
 pub(crate) struct Runtime<T: Transport> {
   transport: T,
+  /// We do not call send directly, just directly drop it.
+  #[allow(dead_code)]
   shutdown_tx: Sender<()>,
   advertise: SocketAddr,
 }
@@ -61,11 +58,9 @@ pub(crate) struct ShowbizCore<D: Delegate, T: Transport, S: Spawner> {
   hot: HotData,
   awareness: Awareness,
   broadcast: TransmitLimitedQueue<ShowbizBroadcast, DefaultNodeCalculator>,
-  // Serializes calls to Leave
-  leave_lock: Mutex<()>,
   leave_broadcast_tx: Sender<()>,
   leave_broadcast_rx: Receiver<()>,
-  opts: Arc<Options<T>>,
+  status_change_lock: Mutex<()>,
   keyring: Option<SecretKeyring>,
   delegate: Option<D>,
   handoff_tx: Sender<()>,
@@ -76,14 +71,15 @@ pub(crate) struct ShowbizCore<D: Delegate, T: Transport, S: Spawner> {
   dns: Option<DNS<T, S>>,
   metrics_labels: Arc<Vec<metrics::Label>>,
   runtime: ArcSwapOption<Runtime<T>>,
-  status: AtomicU8,
+  opts: Arc<Options<T>>,
   spawner: S,
 }
 
-/// Safety: we guarantee that there is no race condition when the transport is modified
-unsafe impl<D: Delegate, T: Transport, S: Spawner> Send for ShowbizCore<D, T, S> {}
-/// Safety: we guarantee that there is no race condition when the transport is modified
-unsafe impl<D: Delegate, T: Transport, S: Spawner> Sync for ShowbizCore<D, T, S> {}
+impl<D: Delegate, T: Transport, S: Spawner> Drop for ShowbizCore<D, T, S> {
+  fn drop(&mut self) {
+    self.runtime.store(None);
+  }
+}
 
 pub struct Showbiz<D: Delegate, T: Transport, S: Spawner> {
   pub(crate) inner: Arc<ShowbizCore<D, T, S>>,
@@ -215,25 +211,24 @@ where
     Ok(Showbiz {
       inner: Arc::new(ShowbizCore {
         id,
+        hot: HotData::new(),
         awareness,
         broadcast,
-        hot: HotData::new(),
-        dns,
-        leave_lock: Mutex::new(()),
-        delegate,
-        keyring,
-        handoff_tx,
-        handoff_rx,
         leave_broadcast_tx,
         leave_broadcast_rx,
+        status_change_lock: Mutex::new(()),
+        keyring,
+        delegate,
         queue: Mutex::new(MessageQueue::new()),
         nodes: Arc::new(RwLock::new(Memberlist::new(opts.name.clone()))),
-        opts: Arc::new(opts),
         ack_handlers: Arc::new(Mutex::new(HashMap::new())),
-        spawner,
+        dns,
         metrics_labels: Arc::new(vec![]),
-        status: AtomicU8::new(0),
         runtime: ArcSwapOption::empty(),
+        opts: Arc::new(opts),
+        spawner,
+        handoff_tx,
+        handoff_rx,
       }),
     })
   }
@@ -241,9 +236,17 @@ where
   #[inline]
   pub async fn bootstrap(&self) -> Result<(), Error<D, T>> {
     // if we already in running status, just return
-    if self.inner.status.load(Ordering::SeqCst) == 1 {
+    if self.is_running() {
       return Ok(());
     }
+
+    let _mu = self.inner.status_change_lock.lock().await;
+    // mark self as running
+    self
+      .inner
+      .hot
+      .status
+      .store(Status::Running, Ordering::Relaxed);
 
     let transport = T::new(self.inner.opts.transport.clone()).await?;
 
@@ -337,10 +340,14 @@ where
   /// This method is safe to call multiple times, but must not be called
   /// after the cluster is already shut down.
   pub async fn leave(&self, timeout: Duration) -> Result<(), Error<D, T>> {
-    let _mu = self.inner.leave_lock.lock().await;
+    if !self.is_running() {
+      return Err(Error::NotRunning);
+    }
 
-    if !self.has_left() {
-      self.inner.hot.leave.fetch_add(1, Ordering::SeqCst);
+    let _mu = self.inner.status_change_lock.lock().await;
+
+    if !self.is_left() {
+      self.inner.hot.status.store(Status::Left, Ordering::Relaxed);
 
       let mut memberlist = self.inner.nodes.write().await;
       if let Some(state) = memberlist.node_map.get(&memberlist.local) {
@@ -399,6 +406,10 @@ where
   /// none could be reached. If an error is returned, the node did not successfully
   /// join the cluster.
   pub async fn join(&self, existing: Vec<NodeId>) -> Result<usize, Vec<Error<D, T>>> {
+    if !self.is_running() {
+      return Err(vec![Error::NotRunning]);
+    }
+
     let mut num_success = 0;
     let mut errors = Vec::new();
     for exist in existing {
@@ -458,6 +469,10 @@ where
   /// broadcasted to a member of the cluster, if any exist or until a specified
   /// timeout is reached.
   pub async fn update_node(&self, timeout: Duration) -> Result<(), Error<D, T>> {
+    if !self.is_running() {
+      return Err(Error::NotRunning);
+    }
+
     // Get the node meta data
     let meta = if let Some(delegate) = &self.inner.delegate {
       let meta = delegate.node_meta(META_MAX_SIZE);
@@ -516,6 +531,9 @@ where
   /// `packet_buffer_size` for this memberlist instance.
   #[inline]
   pub async fn send(&self, to: NodeId, msg: Message) -> Result<(), Error<D, T>> {
+    if !self.is_running() {
+      return Err(Error::NotRunning);
+    }
     self.raw_send_msg_packet(&to, msg.0).await
   }
 
@@ -525,37 +543,34 @@ where
   /// limit on the size of the message.
   #[inline]
   pub async fn send_reliable(&self, to: &Node, msg: Message) -> Result<(), Error<D, T>> {
+    if !self.is_running() {
+      return Err(Error::NotRunning);
+    }
     self.send_user_msg(to.id(), msg).await
   }
 
+  /// Stop any background maintenance of network activity
+  /// for this memberlist, causing it to appear "dead". A leave message
+  /// will not be broadcasted prior, so the cluster being left will have
+  /// to detect this node's shutdown using probing. If you wish to more
+  /// gracefully exit the cluster, call Leave prior to shutting down.
+  ///
+  /// This method is safe to call multiple times.
+  #[inline]
   pub async fn shutdown(&self) -> Result<(), Error<D, T>> {
-    // // Shut down the transport first, which should block until it's
-    // // completely torn down. If we kill the memberlist-side handlers
-    // // those I/O handlers might get stuck.
-    // let Self { inner: core } = self;
+    // if we already in shutdown state, just return
+    if self.is_shutdown() {
+      return Ok(());
+    }
 
-    // while Arc::strong_count(&core) > 1 {
-    //   parker.await;
-    // }
-
-    // let ShowbizCore {
-    //   hot,
-
-    //   shutdown_tx,
-
-    //   transport,
-    //   ..
-    // } = Arc::into_inner(core).unwrap();
-
-    // // Shut down the transport first, which should block until it's
-    // // completely torn down. If we kill the memberlist-side handlers
-    // // those I/O handlers might get stuck.
-    // transport.shutdown().await.map_err(Error::transport)?;
-
-    // // Now tear down everything else.
-    // hot.shutdown.store(1, Ordering::SeqCst);
-    // drop(shutdown_tx);
-
+    let _mu = self.inner.status_change_lock.lock().await;
+    // mark self as shutdown
+    self
+      .inner
+      .hot
+      .status
+      .store(Status::Shutdown, Ordering::Relaxed);
+    self.inner.runtime.store(None);
     Ok(())
   }
 }
@@ -670,7 +685,7 @@ where
   }
 
   #[inline]
-  pub(crate) async fn get_advertise(&self) -> SocketAddr {
+  pub(crate) fn get_advertise(&self) -> SocketAddr {
     // Unwrap is safe here, because advertise is always set before get_advertise is called.
     self.inner.runtime.load().as_ref().unwrap().advertise
   }

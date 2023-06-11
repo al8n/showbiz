@@ -25,13 +25,6 @@ macro_rules! bail_ping {
       }
 
       #[inline]
-      pub fn encode(&self) -> Bytes {
-        let mut buf = BytesMut::with_capacity(self.encoded_len());
-        self.encode_to(&mut buf);
-        buf.freeze()
-      }
-
-      #[inline]
       pub fn encode_to(&self, mut buf: &mut BytesMut) {
         encode_u32_to_buf(&mut buf, self.encoded_len() as u32);
 

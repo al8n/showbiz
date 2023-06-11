@@ -6,6 +6,7 @@ use std::{
 use crate::{
   showbiz::Spawner,
   types::{AckResponse, NackResponse, NodeAddress},
+  Status,
 };
 
 use super::{
@@ -196,23 +197,33 @@ where
   }
 
   #[inline]
-  pub(crate) fn has_shutdown(&self) -> bool {
+  pub(crate) fn is_shutdown(&self) -> bool {
     self
       .inner
       .hot
-      .shutdown
+      .status
       .load(std::sync::atomic::Ordering::SeqCst)
-      == 1
+      == Status::Shutdown
   }
 
   #[inline]
-  pub(crate) fn has_left(&self) -> bool {
+  pub(crate) fn is_running(&self) -> bool {
     self
       .inner
       .hot
-      .leave
+      .status
       .load(std::sync::atomic::Ordering::SeqCst)
-      == 1
+      == Status::Running
+  }
+
+  #[inline]
+  pub(crate) fn is_left(&self) -> bool {
+    self
+      .inner
+      .hot
+      .status
+      .load(std::sync::atomic::Ordering::SeqCst)
+      == Status::Left
   }
 
   #[inline]

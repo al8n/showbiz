@@ -43,6 +43,8 @@ pub enum Error<D: Delegate, T: Transport> {
   NoPingResponse(NodeId),
   #[error("showbiz: {0}")]
   Other(String),
+  #[error("showbiz: node is not running, please bootstrap first")]
+  NotRunning,
 }
 
 impl<D: Delegate, T: Transport> core::fmt::Debug for Error<D, T> {
