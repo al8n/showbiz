@@ -36,6 +36,7 @@ async-lock = "3"
 async-channel = "2"
 bytes = "1"
 byteorder = "1"
+clap = { version = "4.5", features = ["derive", "env"] }
 derive_more = { version = "1", features = ["full"] }
 futures = "0.3"
 indexmap = "2"

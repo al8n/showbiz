@@ -76,6 +76,9 @@ rkyv = { workspace = true, optional = true }
 serde = { workspace = true, optional = true }
 humantime-serde = { workspace = true, optional = true }
 
+# clap feature (for cli applications)
+clap = { workspace = true, optional = true }
+
 # test feature
 tracing-subscriber = { version = "0.3", optional = true, features = [
   "env-filter",

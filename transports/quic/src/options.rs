@@ -2,6 +2,9 @@ use indexmap::IndexSet;
 
 use super::*;
 
+#[cfg(feature = "clap")]
+mod cli;
+
 /// Used to configure a net transport.
 #[viewit::viewit(getters(vis_all = "pub"), setters(vis_all = "pub", prefix = "with"))]
 #[derive(Debug)]
