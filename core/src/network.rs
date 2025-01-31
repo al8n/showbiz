@@ -56,7 +56,9 @@ where
 
     let ping_sequence_number = ping.sequence_number();
     let ping_msg: Message<_, _> = ping.into();
-    self.send_message(&mut conn, ping_msg.try_into().map_err(Error::wire)?).await?;
+    self
+      .send_message(&mut conn, ping_msg.try_into().map_err(Error::wire)?)
+      .await?;
     let msg: Message<_, _> = self
       .read_message(target, &mut conn)
       .await

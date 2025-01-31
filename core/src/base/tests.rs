@@ -548,10 +548,9 @@ pub async fn memberlist_node_delegate_meta<T, R>(
   R: RuntimeLite,
 {
   let m1 = Memberlist::<T, _>::with_delegate(
-    CompositeDelegate::new().with_node_delegate(MockDelegate::<
-      T::Id,
-      <T::Resolver as AddressResolver>::ResolvedAddress,
-    >::with_meta("web".try_into().unwrap())),
+    CompositeDelegate::new().with_node_delegate(MockDelegate::<T::Wire>::with_meta(
+      "web".try_into().unwrap(),
+    )),
     t1,
     t1_opts,
   )
@@ -559,10 +558,8 @@ pub async fn memberlist_node_delegate_meta<T, R>(
   .unwrap();
 
   let m2 = Memberlist::<T, _>::with_delegate(
-    CompositeDelegate::new().with_node_delegate(MockDelegate::<
-      T::Id,
-      <T::Resolver as AddressResolver>::ResolvedAddress,
-    >::with_meta("lb".try_into().unwrap())),
+    CompositeDelegate::new()
+      .with_node_delegate(MockDelegate::<T::Wire>::with_meta("lb".try_into().unwrap())),
     t2,
     t2_opts,
   )
@@ -633,10 +630,9 @@ pub async fn memberlist_node_delegate_meta_update<T, R>(
   R: RuntimeLite,
 {
   let m1 = Memberlist::<T, _>::with_delegate(
-    CompositeDelegate::new().with_node_delegate(MockDelegate::<
-      T::Id,
-      <T::Resolver as AddressResolver>::ResolvedAddress,
-    >::with_meta("web".try_into().unwrap())),
+    CompositeDelegate::new().with_node_delegate(MockDelegate::<T::Wire>::with_meta(
+      "web".try_into().unwrap(),
+    )),
     t1,
     t1_opts,
   )
@@ -644,10 +640,8 @@ pub async fn memberlist_node_delegate_meta_update<T, R>(
   .unwrap();
 
   let m2 = Memberlist::<T, _>::with_delegate(
-    CompositeDelegate::new().with_node_delegate(MockDelegate::<
-      T::Id,
-      <T::Resolver as AddressResolver>::ResolvedAddress,
-    >::with_meta("lb".try_into().unwrap())),
+    CompositeDelegate::new()
+      .with_node_delegate(MockDelegate::<T::Wire>::with_meta("lb".try_into().unwrap())),
     t2,
     t2_opts,
   )
@@ -737,12 +731,9 @@ pub async fn memberlist_user_data<T, R>(
   R: RuntimeLite,
 {
   let m1 = Memberlist::<T, _>::with_delegate(
-    CompositeDelegate::new().with_node_delegate(MockDelegate::<
-      T::Id,
-      <T::Resolver as AddressResolver>::ResolvedAddress,
-    >::with_state(Bytes::from_static(
-      b"something",
-    ))),
+    CompositeDelegate::new().with_node_delegate(MockDelegate::<T::Wire>::with_state(
+      Bytes::from_static(b"something"),
+    )),
     t1,
     t1_opts
       .with_gossip_interval(Duration::from_millis(100))
@@ -756,12 +747,12 @@ pub async fn memberlist_user_data<T, R>(
     .collect::<TinyVec<_>>();
 
   let m2 = Memberlist::<T, _>::with_delegate(
-    CompositeDelegate::new().with_node_delegate(MockDelegate::<
-      T::Id,
-      <T::Resolver as AddressResolver>::ResolvedAddress,
-    >::with_state_and_broadcasts(
-      Bytes::from_static(b"my state"), bcasts.clone()
-    )),
+    CompositeDelegate::new().with_node_delegate(
+      MockDelegate::<T::Wire>::with_state_and_broadcasts(
+        Bytes::from_static(b"my state"),
+        bcasts.clone(),
+      ),
+    ),
     t2,
     t2_opts
       .with_gossip_interval(Duration::from_millis(100))
@@ -832,10 +823,7 @@ pub async fn memberlist_send<T, R>(
   R: RuntimeLite,
 {
   let m1 = Memberlist::<T, _>::with_delegate(
-    CompositeDelegate::new().with_node_delegate(MockDelegate::<
-      T::Id,
-      <T::Resolver as AddressResolver>::ResolvedAddress,
-    >::new()),
+    CompositeDelegate::new().with_node_delegate(MockDelegate::<T::Wire>::new()),
     t1,
     t1_opts
       .with_gossip_interval(Duration::from_millis(1))
@@ -845,10 +833,7 @@ pub async fn memberlist_send<T, R>(
   .unwrap();
 
   let m2 = Memberlist::<T, _>::with_delegate(
-    CompositeDelegate::new().with_node_delegate(MockDelegate::<
-      T::Id,
-      <T::Resolver as AddressResolver>::ResolvedAddress,
-    >::new()),
+    CompositeDelegate::new().with_node_delegate(MockDelegate::<T::Wire>::new()),
     t2,
     t2_opts
       .with_gossip_interval(Duration::from_millis(1))

@@ -209,10 +209,7 @@ where
   pub async fn new(
     transport_options: T::Options,
     opts: Options,
-  ) -> Result<
-    Self,
-    Error<T, VoidDelegate<T::Id, <T::Resolver as AddressResolver>::ResolvedAddress, T::Wire>>,
-  > {
+  ) -> Result<Self, Error<T, VoidDelegate<T::Wire>>> {
     Self::create(None, transport_options, opts).await
   }
 }
@@ -260,7 +257,7 @@ where
     .with_meta(meta)
     .with_protocol_version(this.inner.opts.protocol_version)
     .with_delegate_version(this.inner.opts.delegate_version);
-    this.alive_node(alive, None, true).await;
+    this.alive_node(alive, None, true).await?;
     this.schedule(shutdown_rx).await;
     tracing::debug!(local = %this.inner.id, advertise_addr = %advertise, "memberlist: node is living");
     Ok(this)
@@ -483,7 +480,7 @@ where
       .with_protocol_version(self.inner.opts.protocol_version)
       .with_delegate_version(self.inner.opts.delegate_version);
     let (notify_tx, notify_rx) = async_channel::bounded(1);
-    self.alive_node(alive, Some(notify_tx), true).await;
+    self.alive_node(alive, Some(notify_tx), true).await?;
 
     // Wait for the broadcast or a timeout
     if self.any_alive().await {
@@ -512,7 +509,9 @@ where
     if self.has_left() || self.has_shutdown() {
       return Err(Error::NotRunning);
     }
-    self.transport_send_packet(to, Message::UserData(msg).try_into().map_err(Error::wire)?).await
+    self
+      .transport_send_packet(to, Message::UserData(msg).try_into().map_err(Error::wire)?)
+      .await
   }
 
   /// Uses the reliable stream-oriented interface of the transport to

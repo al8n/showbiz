@@ -418,7 +418,8 @@ where
   // Add a message to be broadcast
   let n: Node<SmolStr, SocketAddr> = Node::new("rand".into(), *m.advertise_address());
   let a = Alive::new(10, n.clone()).with_meta(Meta::empty());
-  m.broadcast(n.id().clone(), Message::from(a)).await;
+  m.broadcast(n.id().clone(), Message::from(a).try_into().unwrap())
+    .await;
 
   // Encode a ping
   let ping = Ping::new(
@@ -559,11 +560,12 @@ where
               assert_eq!(ping_in.target(), &node1);
 
               let ack = Ack::new(23);
+              let ack_msg: Message<_, _> = ack.into();
 
               unwrap_ok!(ping_err_tx1.send(
                 m1.inner
                   .transport
-                  .send_message(stream.as_mut(), ack.into())
+                  .send_message(stream.as_mut(), ack_msg.try_into().unwrap())
                   .await
                   .map_err(Into::into)
               ));
@@ -583,11 +585,12 @@ where
 
               let ping_in = p.unwrap_ping();
               let ack = Ack::new(ping_in.sequence_number() + 1);
+              let ack_msg: Message<_, _> = ack.into();
 
               unwrap_ok!(ping_err_tx1.send(
                 m1.inner
                   .transport
-                  .send_message(stream.as_mut(), ack.into())
+                  .send_message(stream.as_mut(), ack_msg.try_into().unwrap())
                   .await
                   .map_err(Into::into)
               ));
@@ -605,13 +608,14 @@ where
                   .map_err(Into::into)
               ));
 
+              let ind_msg: Message<_, _> = IndirectPing::new(0, Node::new("unknown source".into(), kind.next(0)), Node::new("unknown target".into(), kind.next(0))).into();
+
               unwrap_ok!(ping_err_tx1.send(
                 m1.inner
                   .transport
                   .send_message(
                     stream.as_mut(),
-                    IndirectPing::new(0, Node::new("unknown source".into(), kind.next(0)), Node::new("unknown target".into(), kind.next(0)))
-                    .into()
+                    ind_msg.try_into().unwrap(),
                   )
                   .await
                   .map_err(Into::into)
@@ -751,9 +755,10 @@ where
 
   // Send the push/pull indicator
   let mut conn = connector.connect().await?;
+  let pp_msg: Message<_, _> = push_pull.into();
   m.inner
     .transport
-    .send_message(conn.as_mut(), push_pull.into())
+    .send_message(conn.as_mut(), pp_msg.try_into().unwrap())
     .await?;
   // Read the message type
   let (_, msg) = m
@@ -849,11 +854,11 @@ pub async fn send<A, T1, T2, R>(trans1: T1::Options, trans2: T2::Options) -> Res
 where
   A: AddressResolver<ResolvedAddress = SocketAddr, Runtime = R>,
   T1: Transport<Id = SmolStr, Resolver = A, Runtime = R>,
-  T2: Transport<Id = SmolStr, Resolver = A, Runtime = R>,
+  T2: Transport<Id = SmolStr, Resolver = A, Runtime = R, Wire = T1::Wire>,
   R: RuntimeLite,
 {
   let m1 = Memberlist::<T1, _>::with_delegate(
-    CompositeDelegate::new().with_node_delegate(MockDelegate::<SmolStr, SocketAddr>::new()),
+    CompositeDelegate::new().with_node_delegate(MockDelegate::<T1::Wire>::new()),
     trans1,
     Options::default(),
   )

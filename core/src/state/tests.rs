@@ -30,10 +30,7 @@ use crate::{
 async fn host_memberlist<T, R>(
   t: T,
   opts: Options,
-) -> Result<
-  Memberlist<T>,
-  Error<T, VoidDelegate<T::Id, <T::Resolver as AddressResolver>::ResolvedAddress>>,
->
+) -> Result<Memberlist<T>, Error<T, VoidDelegate<T::Wire>>>
 where
   T: Transport<Runtime = R>,
   R: RuntimeLite,
@@ -79,11 +76,11 @@ where
 
   let a1 = Alive::new(1, m1.advertise_node());
 
-  m1.alive_node(a1, None, true).await;
+  m1.alive_node(a1, None, true).await.unwrap();
 
   let a2 = Alive::new(1, m2.advertise_node());
 
-  m1.alive_node(a2, None, false).await;
+  m1.alive_node(a2, None, false).await.unwrap();
 
   // should ping addr2
   let (_tx, rx) = async_channel::bounded(1);
@@ -128,17 +125,17 @@ pub async fn probe_node_suspect<T, R>(
 
   let a1 = Alive::new(1, m1.advertise_node());
 
-  m1.alive_node(a1, None, true).await;
+  m1.alive_node(a1, None, true).await.unwrap();
 
   let a2 = Alive::new(1, m2.advertise_node());
 
-  m1.alive_node(a2, None, false).await;
+  m1.alive_node(a2, None, false).await.unwrap();
 
   let a3 = Alive::new(1, m3.advertise_node());
-  m1.alive_node(a3, None, false).await;
+  m1.alive_node(a3, None, false).await.unwrap();
 
   let a4 = Alive::new(1, suspect_node.cheap_clone());
-  m1.alive_node(a4, None, false).await;
+  m1.alive_node(a4, None, false).await.unwrap();
 
   {
     let n = m1
@@ -265,7 +262,7 @@ pub async fn probe_node_dogpile<F, T, R>(
 
     let a = Alive::new(1, m.advertise_node());
 
-    m.alive_node(a, None, true).await;
+    m.alive_node(a, None, true).await.unwrap();
 
     // Make all but one peer be an real, alive instance.
     let mut peers = vec![];
@@ -273,14 +270,14 @@ pub async fn probe_node_dogpile<F, T, R>(
       let t = get_transport(j + 1).await;
       let peer = host_memberlist(t, Options::lan()).await.unwrap();
       let a = Alive::new(1, peer.advertise_node());
-      m.alive_node(a, None, false).await;
+      m.alive_node(a, None, false).await.unwrap();
       peers.push(peer);
     }
 
     // Just use a bogus address for the last peer so it doesn't respond
     // to pings, but tell the memberlist it's alive.
     let a = Alive::new(1, bad_node.cheap_clone());
-    m.alive_node(a, None, false).await;
+    m.alive_node(a, None, false).await.unwrap();
 
     // Force a probe, which should start us into the suspect state.
     {
@@ -376,19 +373,19 @@ pub async fn probe_node_awareness_degraded<T, R>(
 
   let a1 = Alive::new(1, m1.advertise_node());
 
-  m1.alive_node(a1, None, true).await;
+  m1.alive_node(a1, None, true).await.unwrap();
 
   let a2 = Alive::new(1, m2.advertise_node());
 
-  m1.alive_node(a2, None, false).await;
+  m1.alive_node(a2, None, false).await.unwrap();
 
   let a3 = Alive::new(1, m3.advertise_node());
 
-  m1.alive_node(a3, None, false).await;
+  m1.alive_node(a3, None, false).await.unwrap();
 
   // Node 4 never gets started.
   let a4 = Alive::new(1, node4.cheap_clone());
-  m1.alive_node(a4, None, false).await;
+  m1.alive_node(a4, None, false).await.unwrap();
 
   // Start the health in a degraded state.
   m1.inner.awareness.apply_delta(1);
@@ -466,11 +463,11 @@ where
 
   let a1 = Alive::new(1, m1.advertise_node());
 
-  m1.alive_node(a1, None, true).await;
+  m1.alive_node(a1, None, true).await.unwrap();
 
   let a2 = Alive::new(1, m2.advertise_node());
 
-  m1.alive_node(a2, None, false).await;
+  m1.alive_node(a2, None, false).await.unwrap();
 
   // Start the health in a degraded state.
   m1.inner.awareness.apply_delta(1);
@@ -542,19 +539,19 @@ pub async fn probe_node_awareness_missed_nack<T, R>(
 
   let a1 = Alive::new(1, m1.advertise_node());
 
-  m1.alive_node(a1, None, true).await;
+  m1.alive_node(a1, None, true).await.unwrap();
 
   let a2 = Alive::new(1, m2.advertise_node());
 
-  m1.alive_node(a2, None, false).await;
+  m1.alive_node(a2, None, false).await.unwrap();
 
   // Node 3 and node 4 never get started.
   let a3 = Alive::new(1, node3);
 
   let a4 = Alive::new(1, node4.cheap_clone());
   // Node 3 and node 4 never get started.
-  m1.alive_node(a3, None, false).await;
-  m1.alive_node(a4, None, false).await;
+  m1.alive_node(a3, None, false).await.unwrap();
+  m1.alive_node(a4, None, false).await.unwrap();
 
   // Make sure health looks good
   let health = m1.health_score();
@@ -613,12 +610,12 @@ where
 
   let a1 = Alive::new(1, m1.advertise_node());
 
-  m1.alive_node(a1, None, true).await;
+  m1.alive_node(a1, None, true).await.unwrap();
 
   let a2 = Alive::new(1, m2.advertise_node());
 
-  m1.alive_node(a2.cheap_clone(), None, false).await;
-  m2.alive_node(a2, None, true).await;
+  m1.alive_node(a2.cheap_clone(), None, false).await.unwrap();
+  m2.alive_node(a2, None, true).await.unwrap();
 
   // Force the state to suspect so we piggyback a suspect message with the ping.
   // We should see this get refuted later, and the ping will succeed.
@@ -642,7 +639,10 @@ where
   // Should be alive msg
   let broadcasts = m2.inner.broadcast.ordered_view(true).await;
   let msg = broadcasts[0].broadcast.message();
-  assert!(matches!(msg, Message::Alive(_)), "bad message: {msg:?}");
+  assert!(
+    matches!(msg.clone().try_into().unwrap(), Message::Alive(_)),
+    "bad message: {msg:?}"
+  );
   m1.shutdown().await.unwrap();
   m2.shutdown().await.unwrap();
 }
@@ -666,11 +666,11 @@ where
 
   let a1 = Alive::new(1, m1.advertise_node());
 
-  m1.alive_node(a1, None, true).await;
+  m1.alive_node(a1, None, true).await.unwrap();
 
   let a2 = Alive::new(1, m2.advertise_node());
 
-  m1.alive_node(a2, None, false).await;
+  m1.alive_node(a2, None, false).await.unwrap();
 
   {
     let n = m1
@@ -722,11 +722,11 @@ pub async fn ping<T, R>(
 
   let a1 = Alive::new(1, m1.advertise_node());
 
-  m1.alive_node(a1, None, true).await;
+  m1.alive_node(a1, None, true).await.unwrap();
 
   let a2 = Alive::new(1, m2.advertise_node());
 
-  m1.alive_node(a2, None, false).await;
+  m1.alive_node(a2, None, false).await.unwrap();
 
   // Do a legit ping.
   let rtt = {
@@ -769,15 +769,15 @@ pub async fn reset_nodes<T, R>(
 
   let a1 = Alive::new(1, n1);
 
-  m1.alive_node(a1, None, false).await;
+  m1.alive_node(a1, None, false).await.unwrap();
 
   let a2 = Alive::new(1, n2.cheap_clone());
 
-  m1.alive_node(a2, None, false).await;
+  m1.alive_node(a2, None, false).await.unwrap();
 
   let a3 = Alive::new(1, n3);
 
-  m1.alive_node(a3, None, false).await;
+  m1.alive_node(a3, None, false).await.unwrap();
 
   let d = Dead::new(1, n2.id().cheap_clone(), m1.local_id().cheap_clone());
 
@@ -1010,7 +1010,7 @@ pub async fn alive_node_new_node<T, R>(
 
   let a = Alive::new(1, test_node.clone());
 
-  m.alive_node(a, None, false).await;
+  m.alive_node(a, None, false).await.unwrap();
 
   let len = m.inner.nodes.read().await.node_map.len();
   assert_eq!(len, 1, "bad: {len}");
@@ -1130,7 +1130,7 @@ pub async fn alive_node_suspect_node<T, R>(
 
   let mut a = Alive::new(1, test_node.clone());
 
-  m.alive_node(a.clone(), None, false).await;
+  m.alive_node(a.clone(), None, false).await.unwrap();
 
   // Listen only after first join
   m.delegate
@@ -1151,13 +1151,13 @@ pub async fn alive_node_suspect_node<T, R>(
   .await;
 
   // Old incarnation number, should not change
-  m.alive_node(a.clone(), None, false).await;
+  m.alive_node(a.clone(), None, false).await.unwrap();
   let state = m.get_node_state(test_node.id()).await.unwrap();
   assert_eq!(state, State::Suspect, "update with old incarnation!");
 
   // Should reset to alive now
   a.set_incarnation(2);
-  m.alive_node(a, None, false).await;
+  m.alive_node(a, None, false).await.unwrap();
 
   let state = m.get_node_state(test_node.id()).await.unwrap();
   assert_eq!(state, State::Alive, "no update with new incarnation!");
@@ -1204,7 +1204,7 @@ pub async fn alive_node_idempotent<T, R>(
 
   let mut a = Alive::new(1, test_node.clone());
 
-  m.alive_node(a.clone(), None, false).await;
+  m.alive_node(a.clone(), None, false).await.unwrap();
 
   // Listen only after first join
   m.delegate
@@ -1219,7 +1219,7 @@ pub async fn alive_node_idempotent<T, R>(
 
   // Should reset to alive now
   a.set_incarnation(2);
-  m.alive_node(a, None, false).await;
+  m.alive_node(a, None, false).await.unwrap();
 
   let state = m.get_node_state(test_node.id()).await.unwrap();
   assert_eq!(state, State::Alive, "non idempotent");
@@ -1260,7 +1260,7 @@ pub async fn alive_node_change_meta<T, R>(
 
   let mut a = Alive::new(1, test_node.clone()).with_meta("val1".try_into().unwrap());
 
-  m.alive_node(a.clone(), None, false).await;
+  m.alive_node(a.clone(), None, false).await.unwrap();
 
   // Listen only after first join
   m.delegate
@@ -1272,7 +1272,7 @@ pub async fn alive_node_change_meta<T, R>(
 
   a.set_incarnation(2);
   a.set_meta("val2".try_into().unwrap());
-  m.alive_node(a.clone(), None, false).await;
+  m.alive_node(a.clone(), None, false).await.unwrap();
 
   // check updates
   {
@@ -1311,17 +1311,13 @@ where
   T: Transport<Runtime = R>,
   R: RuntimeLite,
 {
-  let m: Memberlist<T> = get_memberlist(
-    t1,
-    VoidDelegate::<T::Id, <T::Resolver as AddressResolver>::ResolvedAddress>::default(),
-    t1_opts,
-  )
-  .await
-  .unwrap();
+  let m: Memberlist<T> = get_memberlist(t1, VoidDelegate::<T::Wire>::default(), t1_opts)
+    .await
+    .unwrap();
 
   let a = Alive::new(1, m.advertise_node());
 
-  m.alive_node(a, None, true).await;
+  m.alive_node(a, None, true).await.unwrap();
 
   // Clear queue
   m.inner.broadcast.reset().await;
@@ -1329,7 +1325,7 @@ where
   // Conflicting alive
   let a = Alive::new(2, m.advertise_node()).with_meta("foo".try_into().unwrap());
 
-  m.alive_node(a, None, false).await;
+  m.alive_node(a, None, false).await.unwrap();
 
   {
     let nodes = m.inner.nodes.read().await;
@@ -1345,7 +1341,10 @@ where
   // Should be alive msg
   let broadcasts = m.inner.broadcast.ordered_view(true).await;
   let msg = broadcasts[0].broadcast.message();
-  assert!(matches!(msg, Message::Alive(_)), "bad message: {msg:?}");
+  assert!(
+    matches!(msg.clone().try_into().unwrap(), Message::Alive(_)),
+    "bad message: {msg:?}"
+  );
 
   m.shutdown().await.unwrap();
 }
@@ -1359,7 +1358,7 @@ where
 {
   let m: Memberlist<T> = get_memberlist(
     t1,
-    VoidDelegate::<T::Id, <T::Resolver as AddressResolver>::ResolvedAddress>::default(),
+    VoidDelegate::<T::Wire>::default(),
     t1_opts.with_dead_node_reclaim_time(Duration::from_millis(10)),
   )
   .await
@@ -1370,7 +1369,7 @@ where
     "127.0.0.1:8000".parse().unwrap(),
   );
   let a = Alive::new(1, test_node1.clone());
-  m.alive_node(a, None, true).await;
+  m.alive_node(a, None, true).await.unwrap();
 
   // Clear queue
   m.inner.broadcast.reset().await;
@@ -1381,7 +1380,7 @@ where
     "127.0.0.2:9000".parse().unwrap(),
   );
   let a = Alive::new(2, test_node2.clone()).with_meta("foo".try_into().unwrap());
-  m.alive_node(a, None, false).await;
+  m.alive_node(a, None, false).await.unwrap();
 
   {
     let nodes = m.inner.nodes.read().await;
@@ -1421,7 +1420,7 @@ where
   // New alive node
   let a = Alive::new(3, test_node2.clone()).with_meta("foo".try_into().unwrap());
 
-  m.alive_node(a, None, false).await;
+  m.alive_node(a, None, false).await.unwrap();
 
   {
     let nodes = m.inner.nodes.read().await;
@@ -1440,13 +1439,9 @@ where
   T: Transport<Runtime = R>,
   R: RuntimeLite,
 {
-  let m: Memberlist<T> = get_memberlist(
-    t1,
-    VoidDelegate::<T::Id, <T::Resolver as AddressResolver>::ResolvedAddress>::default(),
-    t1_opts,
-  )
-  .await
-  .unwrap();
+  let m: Memberlist<T> = get_memberlist(t1, VoidDelegate::<T::Wire>::default(), t1_opts)
+    .await
+    .unwrap();
 
   let s = Suspect::new(1, test_node_id, m.local_id().cheap_clone());
 
@@ -1469,7 +1464,7 @@ where
 {
   let m: Memberlist<T> = get_memberlist(
     t1,
-    VoidDelegate::<T::Id, <T::Resolver as AddressResolver>::ResolvedAddress>::default(),
+    VoidDelegate::<T::Wire>::default(),
     t1_opts
       .with_probe_interval(Duration::from_millis(1))
       .with_suspicion_mult(1),
@@ -1483,7 +1478,7 @@ where
   );
   let a = Alive::new(1, test_node1.clone());
 
-  m.alive_node(a, None, false).await;
+  m.alive_node(a, None, false).await.unwrap();
 
   m.change_node(&test_node_id, |state| {
     *state = LocalNodeState {
@@ -1513,7 +1508,10 @@ where
   // Check its a suspect message
   let broadcasts = m.inner.broadcast.ordered_view(true).await;
   let msg = broadcasts[0].broadcast.message();
-  assert!(matches!(msg, Message::Suspect(_)), "bad message: {msg:?}");
+  assert!(
+    matches!(msg.clone().try_into().unwrap(), Message::Suspect(_)),
+    "bad message: {msg:?}"
+  );
 
   // Wait for the timeout
   R::sleep(Duration::from_millis(500)).await;
@@ -1539,7 +1537,10 @@ where
   // Check its a suspect message
   let broadcasts = m.inner.broadcast.ordered_view(true).await;
   let msg = broadcasts[0].broadcast.message();
-  assert!(matches!(msg, Message::Dead(_)), "bad message: {msg:?}");
+  assert!(
+    matches!(msg.clone().try_into().unwrap(), Message::Dead(_)),
+    "bad message: {msg:?}"
+  );
 
   m.shutdown().await.unwrap();
 }
@@ -1551,13 +1552,9 @@ where
   T: Transport<Resolver = A, Runtime = R>,
   R: RuntimeLite,
 {
-  let m: Memberlist<T> = get_memberlist(
-    t1,
-    VoidDelegate::<T::Id, <T::Resolver as AddressResolver>::ResolvedAddress>::default(),
-    t1_opts,
-  )
-  .await
-  .unwrap();
+  let m: Memberlist<T> = get_memberlist(t1, VoidDelegate::<T::Wire>::default(), t1_opts)
+    .await
+    .unwrap();
 
   let test_node1 = Node::new(
     test_node_id.cheap_clone(),
@@ -1565,7 +1562,7 @@ where
   );
   let a = Alive::new(1, test_node1.clone());
 
-  m.alive_node(a, None, false).await;
+  m.alive_node(a, None, false).await.unwrap();
 
   m.change_node(&test_node_id, |state| {
     *state = LocalNodeState {
@@ -1612,13 +1609,9 @@ where
   R: RuntimeLite,
 {
   let now = Epoch::now();
-  let m: Memberlist<T> = get_memberlist(
-    t1,
-    VoidDelegate::<T::Id, <T::Resolver as AddressResolver>::ResolvedAddress>::default(),
-    t1_opts,
-  )
-  .await
-  .unwrap();
+  let m: Memberlist<T> = get_memberlist(t1, VoidDelegate::<T::Wire>::default(), t1_opts)
+    .await
+    .unwrap();
 
   let test_node1 = Node::new(
     test_node_id.cheap_clone(),
@@ -1626,7 +1619,7 @@ where
   );
   let a = Alive::new(1, test_node1.clone());
 
-  m.alive_node(a, None, false).await;
+  m.alive_node(a, None, false).await.unwrap();
 
   m.change_node(&test_node_id, |state| {
     *state = LocalNodeState {
@@ -1659,17 +1652,13 @@ where
   T: Transport<Runtime = R>,
   R: RuntimeLite,
 {
-  let m = get_memberlist(
-    t1,
-    VoidDelegate::<T::Id, <T::Resolver as AddressResolver>::ResolvedAddress>::default(),
-    t1_opts,
-  )
-  .await
-  .unwrap();
+  let m = get_memberlist(t1, VoidDelegate::<T::Wire>::default(), t1_opts)
+    .await
+    .unwrap();
 
   let a = Alive::new(1, m.advertise_node());
 
-  m.alive_node(a, None, true).await;
+  m.alive_node(a, None, true).await.unwrap();
 
   // clear queue
   m.inner.broadcast.reset().await;
@@ -1692,7 +1681,10 @@ where
   // should be alive msg
   let broadcasts = m.inner.broadcast.ordered_view(true).await;
   let msg = broadcasts[0].broadcast.message();
-  assert!(matches!(msg, Message::Alive(_)), "bad message: {msg:?}");
+  assert!(
+    matches!(msg.clone().try_into().unwrap(), Message::Alive(_)),
+    "bad message: {msg:?}"
+  );
 
   // Health should have been dinged
   let health = m.health_score();
@@ -1707,13 +1699,9 @@ where
   T: Transport<Runtime = R>,
   R: RuntimeLite,
 {
-  let m: Memberlist<T> = get_memberlist(
-    t1,
-    VoidDelegate::<T::Id, <T::Resolver as AddressResolver>::ResolvedAddress>::default(),
-    t1_opts,
-  )
-  .await
-  .unwrap();
+  let m: Memberlist<T> = get_memberlist(t1, VoidDelegate::<T::Wire>::default(), t1_opts)
+    .await
+    .unwrap();
 
   let d = Dead::new(1, test_node_id, m.local_id().cheap_clone());
 
@@ -1751,7 +1739,7 @@ where
     "127.0.0.1:8000".parse().unwrap(),
   );
   let a = Alive::new(1, test_node.clone());
-  m.alive_node(a, None, false).await;
+  m.alive_node(a, None, false).await.unwrap();
 
   // Read the join event
   subscriber.recv().await.unwrap();
@@ -1779,7 +1767,10 @@ where
   // Check its a dead message
   let broadcasts = m.inner.broadcast.ordered_view(true).await;
   let msg = broadcasts[0].broadcast.message();
-  assert!(matches!(msg, Message::Dead(_)), "expected queued dead msg");
+  assert!(
+    matches!(msg.clone().try_into().unwrap(), Message::Dead(_)),
+    "expected queued dead msg"
+  );
 
   // Clear queue
 
@@ -1787,7 +1778,7 @@ where
   let test_node1 = Node::new(test_node_id.clone(), "127.0.0.2:9000".parse().unwrap());
   let a = Alive::new(3, test_node1.clone()).with_meta("foo".try_into().unwrap());
 
-  m.alive_node(a, None, false).await;
+  m.alive_node(a, None, false).await.unwrap();
 
   // Read the join event
   subscriber.recv().await.unwrap();
@@ -1821,7 +1812,7 @@ pub async fn dead_node<T, R>(
   .unwrap();
 
   let a = Alive::new(1, test_node.clone());
-  m.alive_node(a, None, false).await;
+  m.alive_node(a, None, false).await.unwrap();
 
   // Read the join event
   subscriber.recv().await.unwrap();
@@ -1868,7 +1859,10 @@ pub async fn dead_node<T, R>(
   // Check its a dead message
   let broadcasts = m.inner.broadcast.ordered_view(true).await;
   let msg = broadcasts[0].broadcast.message();
-  assert!(matches!(msg, Message::Dead(_)), "expected queued dead msg");
+  assert!(
+    matches!(msg.clone().try_into().unwrap(), Message::Dead(_)),
+    "expected queued dead msg"
+  );
   m.shutdown().await.unwrap();
 }
 
@@ -1893,7 +1887,7 @@ pub async fn dead_node_double<T, R>(
 
   let a = Alive::new(1, test_node.clone());
 
-  m.alive_node(a, None, false).await;
+  m.alive_node(a, None, false).await.unwrap();
 
   m.change_node(test_node.id(), |state| {
     *state = LocalNodeState {
@@ -1951,17 +1945,13 @@ pub async fn dead_node_old_dead<T, R>(
   T: Transport<Runtime = R>,
   R: RuntimeLite,
 {
-  let m = get_memberlist(
-    t1,
-    VoidDelegate::<T::Id, <T::Resolver as AddressResolver>::ResolvedAddress>::default(),
-    t1_opts,
-  )
-  .await
-  .unwrap();
+  let m = get_memberlist(t1, VoidDelegate::<T::Wire>::default(), t1_opts)
+    .await
+    .unwrap();
 
   let a = Alive::new(10, test_node.clone());
 
-  m.alive_node(a, None, false).await;
+  m.alive_node(a, None, false).await.unwrap();
 
   m.change_node(test_node.id(), |state| {
     *state = LocalNodeState {
@@ -1993,17 +1983,13 @@ pub async fn dead_node_alive_replay<T, R>(
   T: Transport<Runtime = R>,
   R: RuntimeLite,
 {
-  let m = get_memberlist(
-    t1,
-    VoidDelegate::<T::Id, <T::Resolver as AddressResolver>::ResolvedAddress>::default(),
-    t1_opts,
-  )
-  .await
-  .unwrap();
+  let m = get_memberlist(t1, VoidDelegate::<T::Wire>::default(), t1_opts)
+    .await
+    .unwrap();
 
   let a = Alive::new(10, test_node.clone());
 
-  m.alive_node(a.clone(), None, false).await;
+  m.alive_node(a.clone(), None, false).await.unwrap();
 
   let d = Dead::new(10, test_node.id().clone(), m.local_id().cheap_clone());
 
@@ -2013,7 +1999,7 @@ pub async fn dead_node_alive_replay<T, R>(
   }
 
   // Replay alive at same incarnation
-  m.alive_node(a, None, false).await;
+  m.alive_node(a, None, false).await.unwrap();
 
   // Should remain dead
   let state = m.get_node_state(test_node.id()).await.unwrap();
@@ -2028,16 +2014,12 @@ where
   T: Transport<Runtime = R>,
   R: RuntimeLite,
 {
-  let m = get_memberlist(
-    t1,
-    VoidDelegate::<T::Id, <T::Resolver as AddressResolver>::ResolvedAddress>::default(),
-    t1_opts,
-  )
-  .await
-  .unwrap();
+  let m = get_memberlist(t1, VoidDelegate::<T::Wire>::default(), t1_opts)
+    .await
+    .unwrap();
 
   let a = Alive::new(1, m.advertise_node());
-  m.alive_node(a, None, true).await;
+  m.alive_node(a, None, true).await.unwrap();
 
   // Clear queue
   m.inner.broadcast.reset().await;
@@ -2062,7 +2044,10 @@ where
   // Sould be alive msg
   let broadcasts = m.inner.broadcast.ordered_view(true).await;
   let msg = broadcasts[0].broadcast.message();
-  assert!(matches!(msg, Message::Alive(_)), "bad message: {msg:?}");
+  assert!(
+    matches!(msg.clone().try_into().unwrap(), Message::Alive(_)),
+    "bad message: {msg:?}"
+  );
 
   // We should have been dinged
   let health = m.health_score();
@@ -2095,15 +2080,15 @@ pub async fn merge_state<A, T, R>(
 
   let node1 = Node::new(node_id1.clone(), "127.0.0.1:8000".parse().unwrap());
   let a1 = Alive::new(1, node1.clone());
-  m.alive_node(a1, None, false).await;
+  m.alive_node(a1, None, false).await.unwrap();
 
   let node2 = Node::new(node_id2.clone(), "127.0.0.2:8000".parse().unwrap());
   let a2 = Alive::new(1, node2.clone());
-  m.alive_node(a2, None, false).await;
+  m.alive_node(a2, None, false).await.unwrap();
 
   let node3 = Node::new(node_id3.clone(), "127.0.0.3:8000".parse().unwrap());
   let a3 = Alive::new(1, node3.clone());
-  m.alive_node(a3, None, false).await;
+  m.alive_node(a3, None, false).await.unwrap();
 
   let s = Suspect::new(1, node_id1.clone(), m.local_id().cheap_clone());
   m.suspect_node(s).await.unwrap();
@@ -2189,15 +2174,15 @@ where
   let m3 = host_memberlist(t3, t3_opts).await.unwrap();
 
   let a1 = Alive::new(1, m1.advertise_node());
-  m1.alive_node(a1, None, true).await;
+  m1.alive_node(a1, None, true).await.unwrap();
 
   let a2 = Alive::new(1, m2.advertise_node());
 
-  m1.alive_node(a2, None, false).await;
+  m1.alive_node(a2, None, false).await.unwrap();
 
   let a3 = Alive::new(1, m3.advertise_node());
 
-  m1.alive_node(a3, None, false).await;
+  m1.alive_node(a3, None, false).await.unwrap();
 
   // Gossip should send all this to m2. Retry a few times because it's UDP and
   // timing and stuff makes this flaky without.
@@ -2246,11 +2231,11 @@ where
 
   let a1 = Alive::new(1, m1.advertise_node());
 
-  m1.alive_node(a1, None, true).await;
+  m1.alive_node(a1, None, true).await.unwrap();
 
   let a2 = Alive::new(1, m2.advertise_node());
 
-  m1.alive_node(a2, None, false).await;
+  m1.alive_node(a2, None, false).await.unwrap();
 
   // Shouldn't send anything to m2 here, node has been dead for 2x the GossipToTheDeadTime
   m1.change_node(m2.local_id(), |state| {
@@ -2327,11 +2312,11 @@ where
 
   let a1 = Alive::new(1, m1.advertise_node());
 
-  m1.alive_node(a1, None, true).await;
+  m1.alive_node(a1, None, true).await.unwrap();
 
   let a2 = Alive::new(1, m2.advertise_node());
 
-  m1.alive_node(a2, None, false).await;
+  m1.alive_node(a2, None, false).await.unwrap();
 
   let (_tx, rx) = async_channel::bounded(1);
   for idx in 1..=5 {

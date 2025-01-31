@@ -348,14 +348,8 @@ where
 /// on the protocol. Node failures are detected and network partitions are partially
 /// tolerated by attempting to communicate to potentially dead nodes through
 /// multiple routes.
-pub struct Memberlist<
-  T,
-  D = VoidDelegate<
-    <T as Transport>::Id,
-    <<T as Transport>::Resolver as AddressResolver>::ResolvedAddress,
-    <T as Transport>::Wire,
-  >,
-> where
+pub struct Memberlist<T, D = VoidDelegate<<T as Transport>::Wire>>
+where
   D: Delegate<
     Id = T::Id,
     Address = <T::Resolver as AddressResolver>::ResolvedAddress,

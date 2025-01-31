@@ -4,14 +4,13 @@ use super::*;
 /// so that users do not need to implement full [`Delegate`] when they only want to custom some methods
 /// in the [`Delegate`].
 pub struct CompositeDelegate<
-  I,
-  Address,
-  A = VoidDelegate<I, Address>,
-  C = VoidDelegate<I, Address>,
-  E = VoidDelegate<I, Address>,
-  M = VoidDelegate<I, Address>,
-  N = VoidDelegate<I, Address>,
-  P = VoidDelegate<I, Address>,
+  W,
+  A = VoidDelegate<W>,
+  C = VoidDelegate<W>,
+  E = VoidDelegate<W>,
+  M = VoidDelegate<W>,
+  N = VoidDelegate<W>,
+  P = VoidDelegate<W>,
 > {
   alive_delegate: A,
   conflict_delegate: C,
@@ -19,16 +18,16 @@ pub struct CompositeDelegate<
   merge_delegate: M,
   node_delegate: N,
   ping_delegate: P,
-  _m: std::marker::PhantomData<(I, Address)>,
+  _m: std::marker::PhantomData<W>,
 }
 
-impl<I, Address> Default for CompositeDelegate<I, Address> {
+impl<W> Default for CompositeDelegate<W> {
   fn default() -> Self {
     Self::new()
   }
 }
 
-impl<I, Address> CompositeDelegate<I, Address> {
+impl<W> CompositeDelegate<W> {
   /// Create a new `CompositeDelegate`
   #[inline]
   pub const fn new() -> Self {
@@ -44,12 +43,12 @@ impl<I, Address> CompositeDelegate<I, Address> {
   }
 }
 
-impl<I, Address, A, C, E, M, N, P> CompositeDelegate<I, Address, A, C, E, M, N, P> {
+impl<W, A, C, E, M, N, P> CompositeDelegate<W, A, C, E, M, N, P> {
   /// Set the alive delegate
   pub fn with_alive_delegate<NA>(
     self,
     alive_delegate: NA,
-  ) -> CompositeDelegate<I, Address, NA, C, E, M, N, P> {
+  ) -> CompositeDelegate<W, NA, C, E, M, N, P> {
     CompositeDelegate {
       alive_delegate,
       conflict_delegate: self.conflict_delegate,
@@ -62,12 +61,12 @@ impl<I, Address, A, C, E, M, N, P> CompositeDelegate<I, Address, A, C, E, M, N, 
   }
 }
 
-impl<I, Address, A, C, E, M, N, P> CompositeDelegate<I, Address, A, C, E, M, N, P> {
+impl<W, A, C, E, M, N, P> CompositeDelegate<W, A, C, E, M, N, P> {
   /// Set the conflict delegate
   pub fn with_conflict_delegate<NC>(
     self,
     conflict_delegate: NC,
-  ) -> CompositeDelegate<I, Address, A, NC, E, M, N, P> {
+  ) -> CompositeDelegate<W, A, NC, E, M, N, P> {
     CompositeDelegate {
       alive_delegate: self.alive_delegate,
       conflict_delegate,
@@ -80,12 +79,12 @@ impl<I, Address, A, C, E, M, N, P> CompositeDelegate<I, Address, A, C, E, M, N, 
   }
 }
 
-impl<I, Address, A, C, E, M, N, P> CompositeDelegate<I, Address, A, C, E, M, N, P> {
+impl<W, A, C, E, M, N, P> CompositeDelegate<W, A, C, E, M, N, P> {
   /// Set the event delegate
   pub fn with_event_delegate<NE>(
     self,
     event_delegate: NE,
-  ) -> CompositeDelegate<I, Address, A, C, NE, M, N, P> {
+  ) -> CompositeDelegate<W, A, C, NE, M, N, P> {
     CompositeDelegate {
       alive_delegate: self.alive_delegate,
       conflict_delegate: self.conflict_delegate,
@@ -98,12 +97,12 @@ impl<I, Address, A, C, E, M, N, P> CompositeDelegate<I, Address, A, C, E, M, N, 
   }
 }
 
-impl<I, Address, A, C, E, M, N, P> CompositeDelegate<I, Address, A, C, E, M, N, P> {
+impl<W, A, C, E, M, N, P> CompositeDelegate<W, A, C, E, M, N, P> {
   /// Set the merge delegate
   pub fn with_merge_delegate<NM>(
     self,
     merge_delegate: NM,
-  ) -> CompositeDelegate<I, Address, A, C, E, NM, N, P> {
+  ) -> CompositeDelegate<W, A, C, E, NM, N, P> {
     CompositeDelegate {
       alive_delegate: self.alive_delegate,
       conflict_delegate: self.conflict_delegate,
@@ -116,12 +115,12 @@ impl<I, Address, A, C, E, M, N, P> CompositeDelegate<I, Address, A, C, E, M, N, 
   }
 }
 
-impl<I, Address, A, C, E, M, N, P> CompositeDelegate<I, Address, A, C, E, M, N, P> {
+impl<W, A, C, E, M, N, P> CompositeDelegate<W, A, C, E, M, N, P> {
   /// Set the node delegate
   pub fn with_node_delegate<NN>(
     self,
     node_delegate: NN,
-  ) -> CompositeDelegate<I, Address, A, C, E, M, NN, P> {
+  ) -> CompositeDelegate<W, A, C, E, M, NN, P> {
     CompositeDelegate {
       alive_delegate: self.alive_delegate,
       conflict_delegate: self.conflict_delegate,
@@ -134,12 +133,12 @@ impl<I, Address, A, C, E, M, N, P> CompositeDelegate<I, Address, A, C, E, M, N, 
   }
 }
 
-impl<I, Address, A, C, E, M, N, P> CompositeDelegate<I, Address, A, C, E, M, N, P> {
+impl<W, A, C, E, M, N, P> CompositeDelegate<W, A, C, E, M, N, P> {
   /// Set the ping delegate
   pub fn with_ping_delegate<NP>(
     self,
     ping_delegate: NP,
-  ) -> CompositeDelegate<I, Address, A, C, E, M, N, NP> {
+  ) -> CompositeDelegate<W, A, C, E, M, N, NP> {
     CompositeDelegate {
       alive_delegate: self.alive_delegate,
       conflict_delegate: self.conflict_delegate,
@@ -153,7 +152,7 @@ impl<I, Address, A, C, E, M, N, P> CompositeDelegate<I, Address, A, C, E, M, N, 
 }
 
 #[cfg(any(feature = "test", test))]
-impl<I, Address, A, C, E, M, N, P> CompositeDelegate<I, Address, A, C, E, M, N, P> {
+impl<W, A, C, E, M, N, P> CompositeDelegate<W, A, C, E, M, N, P> {
   pub(crate) fn node_delegate(&self) -> &N {
     &self.node_delegate
   }
@@ -179,20 +178,21 @@ impl<I, Address, A, C, E, M, N, P> CompositeDelegate<I, Address, A, C, E, M, N, 
   }
 }
 
-impl<I, Address, A, C, E, M, N, P> AliveDelegate for CompositeDelegate<I, Address, A, C, E, M, N, P>
+impl<W, A, C, E, M, N, P> AliveDelegate for CompositeDelegate<W, A, C, E, M, N, P>
 where
-  I: Id + Send + Sync + 'static,
-  Address: CheapClone + Send + Sync + 'static,
-  A: AliveDelegate<Id = I, Address = Address>,
-  C: ConflictDelegate<Id = I, Address = Address>,
-  E: EventDelegate<Id = I, Address = Address>,
-  M: MergeDelegate<Id = I, Address = Address>,
+  W: Wire + Send + Sync + 'static,
+  W::Id: Id + Send + Sync + 'static,
+  W::Address: CheapClone + Send + Sync + 'static,
+  A: AliveDelegate<Id = W::Id, Address = W::Address>,
+  C: ConflictDelegate<Id = W::Id, Address = W::Address>,
+  E: EventDelegate<Id = W::Id, Address = W::Address>,
+  M: MergeDelegate<Id = W::Id, Address = W::Address>,
   N: NodeDelegate,
-  P: PingDelegate<Id = I, Address = Address>,
+  P: PingDelegate<Id = W::Id, Address = W::Address>,
 {
   type Error = A::Error;
-  type Id = I;
-  type Address = Address;
+  type Id = W::Id;
+  type Address = W::Address;
 
   async fn notify_alive(
     &self,
@@ -202,20 +202,21 @@ where
   }
 }
 
-impl<I, Address, A, C, E, M, N, P> MergeDelegate for CompositeDelegate<I, Address, A, C, E, M, N, P>
+impl<W, A, C, E, M, N, P> MergeDelegate for CompositeDelegate<W, A, C, E, M, N, P>
 where
-  I: Id + Send + Sync + 'static,
-  Address: CheapClone + Send + Sync + 'static,
-  A: AliveDelegate<Id = I, Address = Address>,
-  C: ConflictDelegate<Id = I, Address = Address>,
-  E: EventDelegate<Id = I, Address = Address>,
-  M: MergeDelegate<Id = I, Address = Address>,
+  W: Wire + Send + Sync + 'static,
+  W::Id: Id + Send + Sync + 'static,
+  W::Address: CheapClone + Send + Sync + 'static,
+  A: AliveDelegate<Id = W::Id, Address = W::Address>,
+  C: ConflictDelegate<Id = W::Id, Address = W::Address>,
+  E: EventDelegate<Id = W::Id, Address = W::Address>,
+  M: MergeDelegate<Id = W::Id, Address = W::Address>,
   N: NodeDelegate,
-  P: PingDelegate<Id = I, Address = Address>,
+  P: PingDelegate<Id = W::Id, Address = W::Address>,
 {
   type Error = M::Error;
-  type Id = I;
-  type Address = Address;
+  type Id = W::Id;
+  type Address = W::Address;
 
   async fn notify_merge(
     &self,
@@ -225,20 +226,20 @@ where
   }
 }
 
-impl<I, Address, A, C, E, M, N, P> ConflictDelegate
-  for CompositeDelegate<I, Address, A, C, E, M, N, P>
+impl<W, A, C, E, M, N, P> ConflictDelegate for CompositeDelegate<W, A, C, E, M, N, P>
 where
-  I: Id + Send + Sync + 'static,
-  Address: CheapClone + Send + Sync + 'static,
-  A: AliveDelegate<Id = I, Address = Address>,
-  C: ConflictDelegate<Id = I, Address = Address>,
-  E: EventDelegate<Id = I, Address = Address>,
-  M: MergeDelegate<Id = I, Address = Address>,
+  W: Wire + Send + Sync + 'static,
+  W::Id: Id + Send + Sync + 'static,
+  W::Address: CheapClone + Send + Sync + 'static,
+  A: AliveDelegate<Id = W::Id, Address = W::Address>,
+  C: ConflictDelegate<Id = W::Id, Address = W::Address>,
+  E: EventDelegate<Id = W::Id, Address = W::Address>,
+  M: MergeDelegate<Id = W::Id, Address = W::Address>,
   N: NodeDelegate,
-  P: PingDelegate<Id = I, Address = Address>,
+  P: PingDelegate<Id = W::Id, Address = W::Address>,
 {
-  type Id = I;
-  type Address = Address;
+  type Id = W::Id;
+  type Address = W::Address;
 
   async fn notify_conflict(
     &self,
@@ -252,19 +253,20 @@ where
   }
 }
 
-impl<I, Address, A, C, E, M, N, P> PingDelegate for CompositeDelegate<I, Address, A, C, E, M, N, P>
+impl<W, A, C, E, M, N, P> PingDelegate for CompositeDelegate<W, A, C, E, M, N, P>
 where
-  I: Id + Send + Sync + 'static,
-  Address: CheapClone + Send + Sync + 'static,
-  A: AliveDelegate<Id = I, Address = Address>,
-  C: ConflictDelegate<Id = I, Address = Address>,
-  E: EventDelegate<Id = I, Address = Address>,
-  M: MergeDelegate<Id = I, Address = Address>,
+  W: Wire + Send + Sync + 'static,
+  W::Id: Id + Send + Sync + 'static,
+  W::Address: CheapClone + Send + Sync + 'static,
+  A: AliveDelegate<Id = W::Id, Address = W::Address>,
+  C: ConflictDelegate<Id = W::Id, Address = W::Address>,
+  E: EventDelegate<Id = W::Id, Address = W::Address>,
+  M: MergeDelegate<Id = W::Id, Address = W::Address>,
   N: NodeDelegate,
-  P: PingDelegate<Id = I, Address = Address>,
+  P: PingDelegate<Id = W::Id, Address = W::Address>,
 {
-  type Id = I;
-  type Address = Address;
+  type Id = W::Id;
+  type Address = W::Address;
 
   async fn ack_payload(&self) -> Bytes {
     self.ping_delegate.ack_payload().await
@@ -287,20 +289,21 @@ where
   }
 }
 
-impl<I, Address, A, C, E, M, N, P> EventDelegate for CompositeDelegate<I, Address, A, C, E, M, N, P>
+impl<W, A, C, E, M, N, P> EventDelegate for CompositeDelegate<W, A, C, E, M, N, P>
 where
-  I: Id + Send + Sync + 'static,
-  Address: CheapClone + Send + Sync + 'static,
-  A: AliveDelegate<Id = I, Address = Address>,
-  C: ConflictDelegate<Id = I, Address = Address>,
-  E: EventDelegate<Id = I, Address = Address>,
-  M: MergeDelegate<Id = I, Address = Address>,
+  W: Wire + Send + Sync + 'static,
+  W::Id: Id + Send + Sync + 'static,
+  W::Address: CheapClone + Send + Sync + 'static,
+  A: AliveDelegate<Id = W::Id, Address = W::Address>,
+  C: ConflictDelegate<Id = W::Id, Address = W::Address>,
+  E: EventDelegate<Id = W::Id, Address = W::Address>,
+  M: MergeDelegate<Id = W::Id, Address = W::Address>,
   N: NodeDelegate,
-  P: PingDelegate<Id = I, Address = Address>,
+  P: PingDelegate<Id = W::Id, Address = W::Address>,
 {
-  type Id = I;
+  type Id = W::Id;
 
-  type Address = Address;
+  type Address = W::Address;
 
   async fn notify_join(&self, node: Arc<NodeState<Self::Id, Self::Address>>) {
     self.event_delegate.notify_join(node).await
@@ -315,17 +318,20 @@ where
   }
 }
 
-impl<I, Address, A, C, E, M, N, P> NodeDelegate for CompositeDelegate<I, Address, A, C, E, M, N, P>
+impl<W, A, C, E, M, N, P> NodeDelegate for CompositeDelegate<W, A, C, E, M, N, P>
 where
-  I: Id + Send + Sync + 'static,
-  Address: CheapClone + Send + Sync + 'static,
-  A: AliveDelegate<Id = I, Address = Address>,
-  C: ConflictDelegate<Id = I, Address = Address>,
-  E: EventDelegate<Id = I, Address = Address>,
-  M: MergeDelegate<Id = I, Address = Address>,
-  N: NodeDelegate,
-  P: PingDelegate<Id = I, Address = Address>,
+  W: Wire + Send + Sync + 'static,
+  W::Id: Id + Send + Sync + 'static,
+  W::Address: CheapClone + Send + Sync + 'static,
+  A: AliveDelegate<Id = W::Id, Address = W::Address>,
+  C: ConflictDelegate<Id = W::Id, Address = W::Address>,
+  E: EventDelegate<Id = W::Id, Address = W::Address>,
+  M: MergeDelegate<Id = W::Id, Address = W::Address>,
+  N: NodeDelegate<Wire = W>,
+  P: PingDelegate<Id = W::Id, Address = W::Address>,
 {
+  type Wire = W;
+
   async fn node_meta(&self, limit: usize) -> Meta {
     self.node_delegate.node_meta(limit).await
   }
@@ -339,13 +345,13 @@ where
     overhead: usize,
     limit: usize,
     encoded_len: F,
-  ) -> TinyVec<Bytes>
+  ) -> Result<(), <Self::Wire as Wire>::Error>
   where
-    F: Fn(Bytes) -> (usize, Bytes) + Send,
+    F: FnMut(Bytes) -> Result<usize, W::Error> + Send,
   {
     self
       .node_delegate
-      .broadcast_messages(overhead, limit, encoded_len)
+      .broadcast_messages::<F>(overhead, limit, encoded_len)
       .await
   }
 
@@ -358,17 +364,18 @@ where
   }
 }
 
-impl<I, Address, A, C, E, M, N, P> Delegate for CompositeDelegate<I, Address, A, C, E, M, N, P>
+impl<W, A, C, E, M, N, P> Delegate for CompositeDelegate<W, A, C, E, M, N, P>
 where
-  I: Id + Send + Sync + 'static,
-  Address: CheapClone + Send + Sync + 'static,
-  A: AliveDelegate<Id = I, Address = Address>,
-  C: ConflictDelegate<Id = I, Address = Address>,
-  E: EventDelegate<Id = I, Address = Address>,
-  M: MergeDelegate<Id = I, Address = Address>,
-  N: NodeDelegate,
-  P: PingDelegate<Id = I, Address = Address>,
+  W: Wire + Send + Sync + 'static,
+  W::Id: Id + Send + Sync + 'static,
+  W::Address: CheapClone + Send + Sync + 'static,
+  A: AliveDelegate<Id = W::Id, Address = W::Address>,
+  C: ConflictDelegate<Id = W::Id, Address = W::Address>,
+  E: EventDelegate<Id = W::Id, Address = W::Address>,
+  M: MergeDelegate<Id = W::Id, Address = W::Address>,
+  N: NodeDelegate<Wire = W>,
+  P: PingDelegate<Id = W::Id, Address = W::Address>,
 {
-  type Address = Address;
-  type Id = I;
+  type Address = W::Address;
+  type Id = W::Id;
 }

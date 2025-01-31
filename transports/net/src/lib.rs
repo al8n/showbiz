@@ -590,7 +590,7 @@ where
   async fn send_message(
     &self,
     conn: &mut Self::Stream,
-    msg: Message<Self::Id, <Self::Resolver as AddressResolver>::ResolvedAddress>,
+    msg: <Self::Wire as Wire>::Message,
   ) -> Result<usize, Self::Error> {
     let ddl = conn.write_deadline();
     self.send_by_promised(conn.with_deadline(ddl), msg).await
@@ -599,7 +599,7 @@ where
   async fn send_packet(
     &self,
     addr: &<Self::Resolver as AddressResolver>::ResolvedAddress,
-    packet: Message<Self::Id, <Self::Resolver as AddressResolver>::ResolvedAddress>,
+    packet: <Self::Wire as Wire>::Message,
   ) -> Result<(usize, <Self::Runtime as RuntimeLite>::Instant), Self::Error> {
     let start = <Self::Runtime as RuntimeLite>::now();
     let encoded_size = W::encoded_len(&packet);
@@ -619,12 +619,12 @@ where
   async fn send_packets(
     &self,
     addr: &<Self::Resolver as AddressResolver>::ResolvedAddress,
-    packets: TinyVec<Message<Self::Id, <Self::Resolver as AddressResolver>::ResolvedAddress>>,
+    packets: TinyVec<<Self::Wire as Wire>::Message>,
   ) -> Result<(usize, <Self::Runtime as RuntimeLite>::Instant), Self::Error> {
     let start = <Self::Runtime as RuntimeLite>::now();
 
     let packets_overhead = self.packets_header_overhead();
-    let batches = batch::<_, _, _, Self::Wire>(
+    let batches = batch::<Self::Wire>(
       packets_overhead - PACKET_HEADER_OVERHEAD,
       PACKET_HEADER_OVERHEAD,
       PACKET_OVERHEAD,

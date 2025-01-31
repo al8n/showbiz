@@ -114,7 +114,9 @@ where
       .map_err(Error::transport)?;
     let msg = Message::UserData(msg);
 
-    self.send_message(&mut conn, msg.try_into().map_err(Error::wire)?).await?;
+    self
+      .send_message(&mut conn, msg.try_into().map_err(Error::wire)?)
+      .await?;
     self
       .inner
       .transport

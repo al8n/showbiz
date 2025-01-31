@@ -112,15 +112,15 @@ impl std::error::Error for VoidDelegateError {}
 
 /// Void delegate
 #[derive(Debug, Copy, Clone)]
-pub struct VoidDelegate<I, A, W>(core::marker::PhantomData<(I, A, W)>);
+pub struct VoidDelegate<W>(core::marker::PhantomData<W>);
 
-impl<I, A, W> Default for VoidDelegate<I, A, W> {
+impl<W> Default for VoidDelegate<W> {
   fn default() -> Self {
     Self::new()
   }
 }
 
-impl<I, A, W> VoidDelegate<I, A, W> {
+impl<W> VoidDelegate<W> {
   /// Creates a new [`VoidDelegate`].
   #[inline]
   pub const fn new() -> Self {
@@ -128,15 +128,15 @@ impl<I, A, W> VoidDelegate<I, A, W> {
   }
 }
 
-impl<I, A, W> AliveDelegate for VoidDelegate<I, A, W>
+impl<W> AliveDelegate for VoidDelegate<W>
 where
-  I: Id + Send + Sync + 'static,
-  A: CheapClone + Send + Sync + 'static,
-  W: Send + Sync + 'static,
+  W: Wire + Send + Sync + 'static,
+  W::Id: Id + Send + Sync + 'static,
+  W::Address: CheapClone + Send + Sync + 'static,
 {
   type Error = VoidDelegateError;
-  type Id = I;
-  type Address = A;
+  type Id = W::Id;
+  type Address = W::Address;
 
   async fn notify_alive(
     &self,
@@ -146,15 +146,15 @@ where
   }
 }
 
-impl<I, A, W> MergeDelegate for VoidDelegate<I, A, W>
+impl<W> MergeDelegate for VoidDelegate<W>
 where
-  I: Id + Send + Sync + 'static,
-  A: CheapClone + Send + Sync + 'static,
-  W: Send + Sync + 'static,
+  W: Wire + Send + Sync + 'static,
+  W::Id: Id + Send + Sync + 'static,
+  W::Address: CheapClone + Send + Sync + 'static,
 {
   type Error = VoidDelegateError;
-  type Id = I;
-  type Address = A;
+  type Id = W::Id;
+  type Address = W::Address;
 
   async fn notify_merge(
     &self,
@@ -164,14 +164,14 @@ where
   }
 }
 
-impl<I, A, W> ConflictDelegate for VoidDelegate<I, A, W>
+impl<W> ConflictDelegate for VoidDelegate<W>
 where
-  I: Id + Send + Sync + 'static,
-  A: CheapClone + Send + Sync + 'static,
-  W: Send + Sync + 'static,
+  W: Wire + Send + Sync + 'static,
+  W::Id: Id + Send + Sync + 'static,
+  W::Address: CheapClone + Send + Sync + 'static,
 {
-  type Id = I;
-  type Address = A;
+  type Id = W::Id;
+  type Address = W::Address;
 
   async fn notify_conflict(
     &self,
@@ -181,14 +181,14 @@ where
   }
 }
 
-impl<I, A, W> PingDelegate for VoidDelegate<I, A, W>
+impl<W> PingDelegate for VoidDelegate<W>
 where
-  I: Id + Send + Sync + 'static,
-  A: CheapClone + Send + Sync + 'static,
-  W: Send + Sync + 'static,
+  W: Wire + Send + Sync + 'static,
+  W::Id: Id + Send + Sync + 'static,
+  W::Address: CheapClone + Send + Sync + 'static,
 {
-  type Id = I;
-  type Address = A;
+  type Id = W::Id;
+  type Address = W::Address;
 
   async fn ack_payload(&self) -> Bytes {
     Bytes::new()
@@ -207,14 +207,14 @@ where
   }
 }
 
-impl<I, A, W> EventDelegate for VoidDelegate<I, A, W>
+impl<W> EventDelegate for VoidDelegate<W>
 where
-  I: Id + Send + Sync + 'static,
-  A: CheapClone + Send + Sync + 'static,
-  W: Send + Sync + 'static,
+  W: Wire + Send + Sync + 'static,
+  W::Id: Id + Send + Sync + 'static,
+  W::Address: CheapClone + Send + Sync + 'static,
 {
-  type Id = I;
-  type Address = A;
+  type Id = W::Id;
+  type Address = W::Address;
 
   async fn notify_join(&self, _node: Arc<NodeState<Self::Id, Self::Address>>) {}
 
@@ -223,10 +223,8 @@ where
   async fn notify_update(&self, _node: Arc<NodeState<Self::Id, Self::Address>>) {}
 }
 
-impl<I, A, W> NodeDelegate for VoidDelegate<I, A, W>
+impl<W> NodeDelegate for VoidDelegate<W>
 where
-  I: Id + Send + Sync + 'static,
-  A: CheapClone + Send + Sync + 'static,
   W: Wire,
 {
   type Wire = W;
@@ -256,12 +254,12 @@ where
   async fn merge_remote_state(&self, _buf: Bytes, _join: bool) {}
 }
 
-impl<I, A, W> Delegate for VoidDelegate<I, A, W>
+impl<W> Delegate for VoidDelegate<W>
 where
-  I: Id + Send + Sync + 'static,
-  A: CheapClone + Send + Sync + 'static,
-  W: Wire,
+  W: Wire + Send + Sync + 'static,
+  W::Id: Id + Send + Sync + 'static,
+  W::Address: CheapClone + Send + Sync + 'static,
 {
-  type Id = I;
-  type Address = A;
+  type Id = W::Id;
+  type Address = W::Address;
 }

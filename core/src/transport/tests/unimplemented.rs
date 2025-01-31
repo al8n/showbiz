@@ -9,14 +9,22 @@ use super::*;
 /// An error type for the [`UnimplementedTransport`].
 #[derive(Debug, thiserror::Error)]
 #[error("error for unimplemented transport")]
-pub struct UnimplementedTransportError;
+pub struct UnimplementedTransportError<E>(PhantomData<E>);
 
-impl TransportError for UnimplementedTransportError {
+impl<E: core::fmt::Debug + Send + Sync + 'static> TransportError
+  for UnimplementedTransportError<E>
+{
   fn is_remote_failure(&self) -> bool {
     unimplemented!()
   }
 
   fn custom(_err: std::borrow::Cow<'static, str>) -> Self {
+    unimplemented!()
+  }
+}
+
+impl<E> From<E> for UnimplementedTransportError<E> {
+  fn from(_: E) -> Self {
     unimplemented!()
   }
 }
@@ -61,7 +69,7 @@ where
   W: Wire<Id = I, Address = A::ResolvedAddress>,
   R: RuntimeLite,
 {
-  type Error = UnimplementedTransportError;
+  type Error = UnimplementedTransportError<W::Error>;
 
   type Id = I;
 
@@ -144,7 +152,7 @@ where
   async fn send_message(
     &self,
     _: &mut Self::Stream,
-    _: Message<Self::Id, <Self::Resolver as AddressResolver>::ResolvedAddress>,
+    _: <Self::Wire as Wire>::Message,
   ) -> Result<usize, Self::Error> {
     unimplemented!()
   }
@@ -152,7 +160,7 @@ where
   async fn send_packet(
     &self,
     _: &<Self::Resolver as AddressResolver>::ResolvedAddress,
-    _: Message<Self::Id, <Self::Resolver as AddressResolver>::ResolvedAddress>,
+    _: <Self::Wire as Wire>::Message,
   ) -> Result<(usize, R::Instant), Self::Error> {
     unimplemented!()
   }
@@ -160,9 +168,7 @@ where
   async fn send_packets(
     &self,
     _: &<Self::Resolver as AddressResolver>::ResolvedAddress,
-    _: memberlist_types::TinyVec<
-      Message<Self::Id, <Self::Resolver as AddressResolver>::ResolvedAddress>,
-    >,
+    _: memberlist_types::TinyVec<<Self::Wire as Wire>::Message>,
   ) -> Result<(usize, R::Instant), Self::Error> {
     unimplemented!()
   }

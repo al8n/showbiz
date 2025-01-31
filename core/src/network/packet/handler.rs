@@ -78,7 +78,9 @@ where
       return;
     }
 
-    self.alive_node(alive, None, false).await
+    if let Err(e) = self.alive_node(alive, None, false).await {
+      tracing::error!(err=%e, remote_addr = %from, "memberlist.packet: failed to alive node");
+    }
   }
 
   async fn handle_dead(
