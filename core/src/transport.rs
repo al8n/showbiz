@@ -262,34 +262,40 @@ pub trait Wire: Send + Sync + 'static {
   /// The resolved address type used to identify nodes
   type Address: Transformable;
 
+  /// The message type used in transmission
+  type Message: TryFrom<Message<Self::Id, Self::Address>, Error = Self::Error>
+    + TryInto<Message<Self::Id, Self::Address>, Error = Self::Error>
+    + core::fmt::Debug
+    + Clone
+    + Send
+    + Sync
+    + 'static;
+
   /// Returns the encoded length of the given message
-  fn encoded_len(msg: &Message<Self::Id, Self::Address>) -> usize;
+  fn encoded_len(msg: &Self::Message) -> usize;
 
   /// Encodes the given message into the given buffer, returns the number of bytes written
-  fn encode_message(
-    msg: Message<Self::Id, Self::Address>,
-    dst: &mut [u8],
-  ) -> Result<usize, Self::Error>;
+  fn encode_message(msg: Self::Message, dst: &mut [u8]) -> Result<usize, Self::Error>;
 
   /// Encodes the given message into the vec.
-  fn encode_message_to_vec(msg: Message<Self::Id, Self::Address>) -> Result<Vec<u8>, Self::Error> {
+  fn encode_message_to_vec(msg: Self::Message) -> Result<Vec<u8>, Self::Error> {
     let mut buf = vec![0; Self::encoded_len(&msg)];
     Self::encode_message(msg, &mut buf)?;
     Ok(buf)
   }
 
   /// Encodes the given message into the bytes.
-  fn encode_message_to_bytes(msg: Message<Self::Id, Self::Address>) -> Result<Bytes, Self::Error> {
+  fn encode_message_to_bytes(msg: Self::Message) -> Result<Bytes, Self::Error> {
     Self::encode_message_to_vec(msg).map(Into::into)
   }
 
   /// Decodes the given bytes into a message, returning how many bytes were read
-  fn decode_message(src: &[u8]) -> Result<(usize, Message<Self::Id, Self::Address>), Self::Error>;
+  fn decode_message(src: &[u8]) -> Result<(usize, Self::Message), Self::Error>;
 
   /// Decode message from the reader and returns the number of bytes read and the message.
   fn decode_message_from_reader(
     conn: impl AsyncRead + Send + Unpin,
-  ) -> impl Future<Output = std::io::Result<(usize, Message<Self::Id, Self::Address>)>> + Send;
+  ) -> impl Future<Output = std::io::Result<(usize, Self::Message)>> + Send;
 }
 
 /// Transport is used to abstract over communicating with other peers. The packet
@@ -297,7 +303,7 @@ pub trait Wire: Send + Sync + 'static {
 /// be reliable.
 pub trait Transport: Sized + Send + Sync + 'static {
   /// The error type for the transport
-  type Error: TransportError;
+  type Error: TransportError + From<<Self::Wire as Wire>::Error>;
   /// The id type used to identify nodes
   type Id: Id;
   /// The address resolver used to resolve addresses
@@ -385,7 +391,7 @@ pub trait Transport: Sized + Send + Sync + 'static {
   fn send_message(
     &self,
     conn: &mut Self::Stream,
-    msg: Message<Self::Id, <Self::Resolver as AddressResolver>::ResolvedAddress>,
+    msg: <Self::Wire as Wire>::Message,
   ) -> impl Future<Output = Result<usize, Self::Error>> + Send;
 
   /// A packet-oriented interface that fires off the given
@@ -399,7 +405,7 @@ pub trait Transport: Sized + Send + Sync + 'static {
   fn send_packet(
     &self,
     addr: &<Self::Resolver as AddressResolver>::ResolvedAddress,
-    packet: Message<Self::Id, <Self::Resolver as AddressResolver>::ResolvedAddress>,
+    packet: <Self::Wire as Wire>::Message,
   ) -> impl Future<Output = Result<(usize, <Self::Runtime as RuntimeLite>::Instant), Self::Error>> + Send;
 
   /// A packet-oriented interface that fires off the given
@@ -413,7 +419,7 @@ pub trait Transport: Sized + Send + Sync + 'static {
   fn send_packets(
     &self,
     addr: &<Self::Resolver as AddressResolver>::ResolvedAddress,
-    packets: TinyVec<Message<Self::Id, <Self::Resolver as AddressResolver>::ResolvedAddress>>,
+    packets: TinyVec<<Self::Wire as Wire>::Message>,
   ) -> impl Future<Output = Result<(usize, <Self::Runtime as RuntimeLite>::Instant), Self::Error>> + Send;
 
   /// Used to create a connection that allows us to perform

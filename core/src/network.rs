@@ -4,7 +4,7 @@ use super::{
   base::Memberlist,
   delegate::Delegate,
   error::Error,
-  transport::{TimeoutableStream, Transport},
+  transport::{TimeoutableStream, Transport, Wire},
   types::*,
 };
 
@@ -24,7 +24,11 @@ const MAX_PUSH_PULL_REQUESTS: u32 = 128;
 
 impl<D, T> Memberlist<T, D>
 where
-  D: Delegate<Id = T::Id, Address = <T::Resolver as AddressResolver>::ResolvedAddress>,
+  D: Delegate<
+    Id = T::Id,
+    Address = <T::Resolver as AddressResolver>::ResolvedAddress,
+    Wire = T::Wire,
+  >,
   T: Transport,
 {
   pub(crate) async fn send_ping_and_wait_for_ack(
@@ -51,7 +55,8 @@ where
     conn.set_deadline(Some(deadline));
 
     let ping_sequence_number = ping.sequence_number();
-    self.send_message(&mut conn, ping.into()).await?;
+    let ping_msg: Message<_, _> = ping.into();
+    self.send_message(&mut conn, ping_msg.try_into().map_err(Error::wire)?).await?;
     let msg: Message<_, _> = self
       .read_message(target, &mut conn)
       .await
@@ -138,7 +143,8 @@ where
   pub(crate) async fn transport_send_packet(
     &self,
     addr: &<T::Resolver as AddressResolver>::ResolvedAddress,
-    packet: Message<T::Id, <T::Resolver as AddressResolver>::ResolvedAddress>,
+    // packet: Message<T::Id, <T::Resolver as AddressResolver>::ResolvedAddress>,
+    packet: <T::Wire as Wire>::Message,
   ) -> Result<(), Error<T, D>> {
     self
       .inner
@@ -161,7 +167,8 @@ where
   pub(crate) async fn transport_send_packets(
     &self,
     addr: &<T::Resolver as AddressResolver>::ResolvedAddress,
-    packet: TinyVec<Message<T::Id, <T::Resolver as AddressResolver>::ResolvedAddress>>,
+    // packet: TinyVec<Message<T::Id, <T::Resolver as AddressResolver>::ResolvedAddress>>,
+    packet: TinyVec<<T::Wire as Wire>::Message>,
   ) -> Result<(), Error<T, D>> {
     self
       .inner
@@ -184,7 +191,7 @@ where
   pub(crate) async fn send_message(
     &self,
     conn: &mut T::Stream,
-    msg: Message<T::Id, <T::Resolver as AddressResolver>::ResolvedAddress>,
+    msg: <T::Wire as Wire>::Message,
   ) -> Result<(), Error<T, D>> {
     self
       .inner

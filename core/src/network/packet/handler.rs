@@ -6,7 +6,11 @@ use super::*;
 
 impl<D, T> Memberlist<T, D>
 where
-  D: Delegate<Id = T::Id, Address = <T::Resolver as AddressResolver>::ResolvedAddress>,
+  D: Delegate<
+    Id = T::Id,
+    Address = <T::Resolver as AddressResolver>::ResolvedAddress,
+    Wire = T::Wire,
+  >,
   T: Transport,
 {
   /// a long running thread that processes messages received

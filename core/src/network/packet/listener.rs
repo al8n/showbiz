@@ -32,7 +32,11 @@ macro_rules! queue {
 
 impl<D, T> Memberlist<T, D>
 where
-  D: Delegate<Id = T::Id, Address = <T::Resolver as AddressResolver>::ResolvedAddress>,
+  D: Delegate<
+    Id = T::Id,
+    Address = <T::Resolver as AddressResolver>::ResolvedAddress,
+    Wire = T::Wire,
+  >,
   T: Transport,
 {
   pub(crate) fn packet_listener(
@@ -258,6 +262,7 @@ where
     addr: &<T::Resolver as AddressResolver>::ResolvedAddress,
     msg: Message<T::Id, <T::Resolver as AddressResolver>::ResolvedAddress>,
   ) -> Result<(), Error<T, D>> {
+    let msg = msg.try_into().map_err(Error::wire)?;
     // Check if we can piggy back any messages
     let bytes_avail = self.inner.transport.max_payload_size()
       - <T::Wire as Wire>::encoded_len(&msg)

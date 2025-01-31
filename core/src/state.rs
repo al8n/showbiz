@@ -71,7 +71,11 @@ impl<I, A> LocalNodeState<I, A> {
 impl<T, D> Memberlist<T, D>
 where
   T: Transport,
-  D: Delegate<Id = T::Id, Address = <T::Resolver as AddressResolver>::ResolvedAddress>,
+  D: Delegate<
+    Id = T::Id,
+    Address = <T::Resolver as AddressResolver>::ResolvedAddress,
+    Wire = T::Wire,
+  >,
 {
   /// Returns a usable sequence number in a thread safe way
   #[inline]
@@ -134,7 +138,11 @@ where
 // ---------------------------------Crate methods-------------------------------
 impl<T, D> Memberlist<T, D>
 where
-  D: Delegate<Id = T::Id, Address = <T::Resolver as AddressResolver>::ResolvedAddress>,
+  D: Delegate<
+    Id = T::Id,
+    Address = <T::Resolver as AddressResolver>::ResolvedAddress,
+    Wire = T::Wire,
+  >,
   T: Transport,
 {
   /// Does a complete state exchange with a specific node.
@@ -580,7 +588,11 @@ where
 {
   async fn run<D>(self, s: &Memberlist<T, D>)
   where
-    D: Delegate<Id = T::Id, Address = <T::Resolver as AddressResolver>::ResolvedAddress>,
+    D: Delegate<
+      Id = T::Id,
+      Address = <T::Resolver as AddressResolver>::ResolvedAddress,
+      Wire = T::Wire,
+    >,
   {
     match self {
       StateMessage::Alive(alive) => s.alive_node(alive, None, false).await,
@@ -606,7 +618,11 @@ where
 #[inline]
 fn move_dead_nodes<T, D>(nodes: &mut [Member<T, D>], gossip_to_the_dead_time: Duration) -> usize
 where
-  D: Delegate<Id = T::Id, Address = <T::Resolver as AddressResolver>::ResolvedAddress>,
+  D: Delegate<
+    Id = T::Id,
+    Address = <T::Resolver as AddressResolver>::ResolvedAddress,
+    Wire = T::Wire,
+  >,
   T: Transport,
 {
   let mut num_dead = 0;
@@ -678,7 +694,11 @@ macro_rules! bail_trigger {
 
 impl<T, D> Memberlist<T, D>
 where
-  D: Delegate<Id = T::Id, Address = <T::Resolver as AddressResolver>::ResolvedAddress>,
+  D: Delegate<
+    Id = T::Id,
+    Address = <T::Resolver as AddressResolver>::ResolvedAddress,
+    Wire = T::Wire,
+  >,
   T: Transport,
 {
   /// Used to ensure the Tick is performed periodically.

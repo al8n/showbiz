@@ -1,11 +1,16 @@
 use std::future::Future;
 
 use bytes::Bytes;
-use memberlist_types::{Meta, TinyVec};
+use memberlist_types::Meta;
+
+use crate::transport::Wire;
 
 /// Used to manage node related events.
 #[auto_impl::auto_impl(Box, Arc)]
 pub trait NodeDelegate: Send + Sync + 'static {
+  /// The [`Wire`] type used by the node delegate.
+  type Wire: Wire;
+
   /// Used to retrieve meta-data about the current node
   /// when broadcasting an alive message. It's length is limited to
   /// the given byte size. This metadata is available in the NodeState structure.
@@ -34,9 +39,9 @@ pub trait NodeDelegate: Send + Sync + 'static {
     overhead: usize,
     limit: usize,
     encoded_len: F,
-  ) -> impl Future<Output = TinyVec<Bytes>> + Send
+  ) -> impl Future<Output = Result<(), <Self::Wire as Wire>::Error>> + Send
   where
-    F: Fn(Bytes) -> (usize, Bytes) + Send;
+    F: FnMut(Bytes) -> Result<usize, <Self::Wire as Wire>::Error> + Send;
 
   /// Used for a TCP Push/Pull. This is sent to
   /// the remote side in addition to the membership information. Any

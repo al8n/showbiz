@@ -77,7 +77,11 @@ impl<I, A> MessageQueue<I, A> {
 // #[viewit::viewit]
 pub(crate) struct Member<T, D>
 where
-  D: Delegate<Id = T::Id, Address = <T::Resolver as AddressResolver>::ResolvedAddress>,
+  D: Delegate<
+    Id = T::Id,
+    Address = <T::Resolver as AddressResolver>::ResolvedAddress,
+    Wire = T::Wire,
+  >,
   T: Transport,
 {
   pub(crate) state: LocalNodeState<T::Id, <T::Resolver as AddressResolver>::ResolvedAddress>,
@@ -86,7 +90,11 @@ where
 
 impl<T, D> core::fmt::Debug for Member<T, D>
 where
-  D: Delegate<Id = T::Id, Address = <T::Resolver as AddressResolver>::ResolvedAddress>,
+  D: Delegate<
+    Id = T::Id,
+    Address = <T::Resolver as AddressResolver>::ResolvedAddress,
+    Wire = T::Wire,
+  >,
   T: Transport,
 {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -98,7 +106,11 @@ where
 
 impl<T, D> core::ops::Deref for Member<T, D>
 where
-  D: Delegate<Id = T::Id, Address = <T::Resolver as AddressResolver>::ResolvedAddress>,
+  D: Delegate<
+    Id = T::Id,
+    Address = <T::Resolver as AddressResolver>::ResolvedAddress,
+    Wire = T::Wire,
+  >,
   T: Transport,
 {
   type Target = LocalNodeState<T::Id, <T::Resolver as AddressResolver>::ResolvedAddress>;
@@ -110,7 +122,11 @@ where
 
 pub(crate) struct Members<T, D>
 where
-  D: Delegate<Id = T::Id, Address = <T::Resolver as AddressResolver>::ResolvedAddress>,
+  D: Delegate<
+    Id = T::Id,
+    Address = <T::Resolver as AddressResolver>::ResolvedAddress,
+    Wire = T::Wire,
+  >,
   T: Transport,
 {
   pub(crate) local: Node<T::Id, <T::Resolver as AddressResolver>::ResolvedAddress>,
@@ -120,7 +136,11 @@ where
 
 impl<T, D> core::ops::Index<usize> for Members<T, D>
 where
-  D: Delegate<Id = T::Id, Address = <T::Resolver as AddressResolver>::ResolvedAddress>,
+  D: Delegate<
+    Id = T::Id,
+    Address = <T::Resolver as AddressResolver>::ResolvedAddress,
+    Wire = T::Wire,
+  >,
   T: Transport,
 {
   type Output = Member<T, D>;
@@ -132,7 +152,11 @@ where
 
 impl<T, D> core::ops::IndexMut<usize> for Members<T, D>
 where
-  D: Delegate<Id = T::Id, Address = <T::Resolver as AddressResolver>::ResolvedAddress>,
+  D: Delegate<
+    Id = T::Id,
+    Address = <T::Resolver as AddressResolver>::ResolvedAddress,
+    Wire = T::Wire,
+  >,
   T: Transport,
 {
   fn index_mut(&mut self, index: usize) -> &mut Self::Output {
@@ -142,7 +166,11 @@ where
 
 impl<T, D> rand::seq::IndexedRandom for Members<T, D>
 where
-  D: Delegate<Id = T::Id, Address = <T::Resolver as AddressResolver>::ResolvedAddress>,
+  D: Delegate<
+    Id = T::Id,
+    Address = <T::Resolver as AddressResolver>::ResolvedAddress,
+    Wire = T::Wire,
+  >,
   T: Transport,
 {
   fn len(&self) -> usize {
@@ -152,7 +180,11 @@ where
 
 impl<T, D> rand::seq::SliceRandom for Members<T, D>
 where
-  D: Delegate<Id = T::Id, Address = <T::Resolver as AddressResolver>::ResolvedAddress>,
+  D: Delegate<
+    Id = T::Id,
+    Address = <T::Resolver as AddressResolver>::ResolvedAddress,
+    Wire = T::Wire,
+  >,
   T: Transport,
 {
   fn shuffle<R>(&mut self, rng: &mut R)
@@ -197,7 +229,11 @@ where
 
 impl<T, D> Members<T, D>
 where
-  D: Delegate<Id = T::Id, Address = <T::Resolver as AddressResolver>::ResolvedAddress>,
+  D: Delegate<
+    Id = T::Id,
+    Address = <T::Resolver as AddressResolver>::ResolvedAddress,
+    Wire = T::Wire,
+  >,
   T: Transport,
 {
   fn new(local: Node<T::Id, <T::Resolver as AddressResolver>::ResolvedAddress>) -> Self {
@@ -211,7 +247,11 @@ where
 
 impl<T, D> Members<T, D>
 where
-  D: Delegate<Id = T::Id, Address = <T::Resolver as AddressResolver>::ResolvedAddress>,
+  D: Delegate<
+    Id = T::Id,
+    Address = <T::Resolver as AddressResolver>::ResolvedAddress,
+    Wire = T::Wire,
+  >,
   T: Transport,
 {
   pub(crate) fn any_alive(&self) -> bool {
@@ -227,16 +267,17 @@ where
 
 pub(crate) struct MemberlistCore<T, D>
 where
-  D: Delegate<Id = T::Id, Address = <T::Resolver as AddressResolver>::ResolvedAddress>,
+  D: Delegate<
+    Id = T::Id,
+    Address = <T::Resolver as AddressResolver>::ResolvedAddress,
+    Wire = T::Wire,
+  >,
   T: Transport,
 {
   pub(crate) id: T::Id,
   pub(crate) hot: HotData,
   pub(crate) awareness: Awareness,
-  pub(crate) broadcast: TransmitLimitedQueue<
-    MemberlistBroadcast<T::Id, <T::Resolver as AddressResolver>::ResolvedAddress, T::Wire>,
-    Arc<AtomicU32>,
-  >,
+  pub(crate) broadcast: TransmitLimitedQueue<MemberlistBroadcast<T::Wire>, Arc<AtomicU32>>,
   pub(crate) leave_broadcast_tx: Sender<()>,
   pub(crate) leave_lock: Mutex<()>,
   pub(crate) leave_broadcast_rx: Receiver<()>,
@@ -258,7 +299,11 @@ where
 
 impl<T, D> MemberlistCore<T, D>
 where
-  D: Delegate<Id = T::Id, Address = <T::Resolver as AddressResolver>::ResolvedAddress>,
+  D: Delegate<
+    Id = T::Id,
+    Address = <T::Resolver as AddressResolver>::ResolvedAddress,
+    Wire = T::Wire,
+  >,
   T: Transport,
 {
   pub(crate) async fn shutdown(&self) -> Result<(), T::Error> {
@@ -280,7 +325,11 @@ where
 
 impl<T, D> Drop for MemberlistCore<T, D>
 where
-  D: Delegate<Id = T::Id, Address = <T::Resolver as AddressResolver>::ResolvedAddress>,
+  D: Delegate<
+    Id = T::Id,
+    Address = <T::Resolver as AddressResolver>::ResolvedAddress,
+    Wire = T::Wire,
+  >,
   T: Transport,
 {
   fn drop(&mut self) {
@@ -304,9 +353,14 @@ pub struct Memberlist<
   D = VoidDelegate<
     <T as Transport>::Id,
     <<T as Transport>::Resolver as AddressResolver>::ResolvedAddress,
+    <T as Transport>::Wire,
   >,
 > where
-  D: Delegate<Id = T::Id, Address = <T::Resolver as AddressResolver>::ResolvedAddress>,
+  D: Delegate<
+    Id = T::Id,
+    Address = <T::Resolver as AddressResolver>::ResolvedAddress,
+    Wire = T::Wire,
+  >,
   T: Transport,
 {
   pub(crate) inner: Arc<MemberlistCore<T, D>>,
@@ -316,7 +370,11 @@ pub struct Memberlist<
 impl<T, D> Clone for Memberlist<T, D>
 where
   T: Transport,
-  D: Delegate<Id = T::Id, Address = <T::Resolver as AddressResolver>::ResolvedAddress>,
+  D: Delegate<
+    Id = T::Id,
+    Address = <T::Resolver as AddressResolver>::ResolvedAddress,
+    Wire = T::Wire,
+  >,
 {
   fn clone(&self) -> Self {
     Self {
@@ -328,7 +386,11 @@ where
 
 impl<T, D> Memberlist<T, D>
 where
-  D: Delegate<Id = T::Id, Address = <T::Resolver as AddressResolver>::ResolvedAddress>,
+  D: Delegate<
+    Id = T::Id,
+    Address = <T::Resolver as AddressResolver>::ResolvedAddress,
+    Wire = T::Wire,
+  >,
   T: Transport,
 {
   pub(crate) async fn new_in(
@@ -402,7 +464,11 @@ where
 // private impelementation
 impl<T, D> Memberlist<T, D>
 where
-  D: Delegate<Id = T::Id, Address = <T::Resolver as AddressResolver>::ResolvedAddress>,
+  D: Delegate<
+    Id = T::Id,
+    Address = <T::Resolver as AddressResolver>::ResolvedAddress,
+    Wire = T::Wire,
+  >,
   T: Transport,
 {
   #[inline]

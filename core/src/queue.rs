@@ -437,12 +437,13 @@ mod tests {
 
   impl<I, A> crate::transport::Wire for DummyWire<I, A>
   where
-    I: Transformable + Send + Sync + 'static,
-    A: Transformable + Send + Sync + 'static,
+    I: Transformable + Clone + core::fmt::Debug + Send + Sync + 'static,
+    A: Transformable + Clone + core::fmt::Debug + Send + Sync + 'static,
   {
-    type Error = std::io::Error;
+    type Error = std::convert::Infallible;
     type Address = A;
     type Id = I;
+    type Message = Message<I, A>;
 
     fn encoded_len(msg: &Message<I, A>) -> usize {
       match msg {
@@ -470,12 +471,8 @@ mod tests {
   fn test_limited_broadcast_less() {
     struct Case {
       name: &'static str,
-      a: Arc<
-        LimitedBroadcast<MemberlistBroadcast<SmolStr, SocketAddr, DummyWire<SmolStr, SocketAddr>>>,
-      >,
-      b: Arc<
-        LimitedBroadcast<MemberlistBroadcast<SmolStr, SocketAddr, DummyWire<SmolStr, SocketAddr>>>,
-      >,
+      a: Arc<LimitedBroadcast<MemberlistBroadcast<DummyWire<SmolStr, SocketAddr>>>>,
+      b: Arc<LimitedBroadcast<MemberlistBroadcast<DummyWire<SmolStr, SocketAddr>>>>,
     }
 
     let cases = [
@@ -485,15 +482,10 @@ mod tests {
           transmits: 0,
           msg_len: 10,
           id: 100,
-          broadcast: Arc::new(MemberlistBroadcast::<
-            SmolStr,
-            SocketAddr,
-            DummyWire<SmolStr, SocketAddr>,
-          > {
+          broadcast: Arc::new(MemberlistBroadcast::<DummyWire<SmolStr, SocketAddr>> {
             node: "diff-transmits-a".into(),
             msg: Message::UserData(Bytes::from([0; 10].as_slice())),
             notify: None,
-            _marker: std::marker::PhantomData,
           }),
         }
         .into(),
@@ -501,15 +493,10 @@ mod tests {
           transmits: 1,
           msg_len: 10,
           id: 100,
-          broadcast: Arc::new(MemberlistBroadcast::<
-            SmolStr,
-            SocketAddr,
-            DummyWire<SmolStr, SocketAddr>,
-          > {
+          broadcast: Arc::new(MemberlistBroadcast::<DummyWire<SmolStr, SocketAddr>> {
             node: "diff-transmits-b".into(),
             msg: Message::UserData(Bytes::from([0; 10].as_slice())),
             notify: None,
-            _marker: std::marker::PhantomData,
           }),
         }
         .into(),
@@ -520,15 +507,10 @@ mod tests {
           transmits: 0,
           msg_len: 12,
           id: 100,
-          broadcast: Arc::new(MemberlistBroadcast::<
-            SmolStr,
-            SocketAddr,
-            DummyWire<SmolStr, SocketAddr>,
-          > {
+          broadcast: Arc::new(MemberlistBroadcast::<DummyWire<SmolStr, SocketAddr>> {
             node: "same-transmits--diff-len-a".into(),
             msg: Message::UserData(Bytes::from([0; 12].as_slice())),
             notify: None,
-            _marker: std::marker::PhantomData,
           }),
         }
         .into(),
@@ -536,15 +518,10 @@ mod tests {
           transmits: 0,
           msg_len: 10,
           id: 100,
-          broadcast: Arc::new(MemberlistBroadcast::<
-            SmolStr,
-            SocketAddr,
-            DummyWire<SmolStr, SocketAddr>,
-          > {
+          broadcast: Arc::new(MemberlistBroadcast::<DummyWire<SmolStr, SocketAddr>> {
             node: "same-transmits--diff-len-b".into(),
             msg: Message::UserData(Bytes::from([0; 10].as_slice())),
             notify: None,
-            _marker: std::marker::PhantomData,
           }),
         }
         .into(),
@@ -555,15 +532,10 @@ mod tests {
           transmits: 0,
           msg_len: 12,
           id: 100,
-          broadcast: Arc::new(MemberlistBroadcast::<
-            SmolStr,
-            SocketAddr,
-            DummyWire<SmolStr, SocketAddr>,
-          > {
+          broadcast: Arc::new(MemberlistBroadcast::<DummyWire<SmolStr, SocketAddr>> {
             node: "same-transmits--same-len--diff-id-a".into(),
             msg: Message::UserData(Bytes::from([0; 12].as_slice())),
             notify: None,
-            _marker: std::marker::PhantomData,
           }),
         }
         .into(),
@@ -571,15 +543,10 @@ mod tests {
           transmits: 0,
           msg_len: 12,
           id: 90,
-          broadcast: Arc::new(MemberlistBroadcast::<
-            SmolStr,
-            SocketAddr,
-            DummyWire<SmolStr, SocketAddr>,
-          > {
+          broadcast: Arc::new(MemberlistBroadcast::<DummyWire<SmolStr, SocketAddr>> {
             node: "same-transmits--same-len--diff-id-b".into(),
             msg: Message::UserData(Bytes::from([0; 12].as_slice())),
             notify: None,
-            _marker: std::marker::PhantomData,
           }),
         }
         .into(),
@@ -609,32 +576,23 @@ mod tests {
   #[tokio::test]
   async fn test_transmit_limited_queue() {
     let q = TransmitLimitedQueue::new(1, 1);
-    q.queue_broadcast(
-      MemberlistBroadcast::<SmolStr, SocketAddr, DummyWire<SmolStr, SocketAddr>> {
-        node: "test".into(),
-        msg: Message::UserData(Bytes::new()),
-        notify: None,
-        _marker: std::marker::PhantomData,
-      },
-    )
+    q.queue_broadcast(MemberlistBroadcast::<DummyWire<SmolStr, SocketAddr>> {
+      node: "test".into(),
+      msg: Message::UserData(Bytes::new()),
+      notify: None,
+    })
     .await;
-    q.queue_broadcast(
-      MemberlistBroadcast::<SmolStr, SocketAddr, DummyWire<SmolStr, SocketAddr>> {
-        node: "foo".into(),
-        msg: Message::UserData(Bytes::new()),
-        notify: None,
-        _marker: std::marker::PhantomData,
-      },
-    )
+    q.queue_broadcast(MemberlistBroadcast::<DummyWire<SmolStr, SocketAddr>> {
+      node: "foo".into(),
+      msg: Message::UserData(Bytes::new()),
+      notify: None,
+    })
     .await;
-    q.queue_broadcast(
-      MemberlistBroadcast::<SmolStr, SocketAddr, DummyWire<SmolStr, SocketAddr>> {
-        node: "bar".into(),
-        msg: Message::UserData(Bytes::new()),
-        notify: None,
-        _marker: std::marker::PhantomData,
-      },
-    )
+    q.queue_broadcast(MemberlistBroadcast::<DummyWire<SmolStr, SocketAddr>> {
+      node: "bar".into(),
+      msg: Message::UserData(Bytes::new()),
+      notify: None,
+    })
     .await;
 
     assert_eq!(q.num_queued().await, 3);
@@ -647,14 +605,11 @@ mod tests {
     assert_eq!(dump[2].broadcast.node.as_str(), "bar");
 
     // Should invalidate previous message
-    q.queue_broadcast(
-      MemberlistBroadcast::<SmolStr, SocketAddr, DummyWire<SmolStr, SocketAddr>> {
-        node: "test".into(),
-        msg: Message::UserData(Bytes::new()),
-        notify: None,
-        _marker: std::marker::PhantomData,
-      },
-    )
+    q.queue_broadcast(MemberlistBroadcast::<DummyWire<SmolStr, SocketAddr>> {
+      node: "test".into(),
+      msg: Message::UserData(Bytes::new()),
+      notify: None,
+    })
     .await;
 
     assert_eq!(q.num_queued().await, 3);
@@ -671,57 +626,45 @@ mod tests {
     let q = TransmitLimitedQueue::new(3, 10);
 
     // 18 bytes per message
-    q.queue_broadcast(
-      MemberlistBroadcast::<SmolStr, SocketAddr, DummyWire<SmolStr, SocketAddr>> {
-        node: "test".into(),
-        msg: {
-          let mut msg = BytesMut::new();
-          msg.put_slice(b"1. this is a test.");
-          Message::UserData(msg.freeze())
-        },
-        notify: None,
-        _marker: std::marker::PhantomData,
+    q.queue_broadcast(MemberlistBroadcast::<DummyWire<SmolStr, SocketAddr>> {
+      node: "test".into(),
+      msg: {
+        let mut msg = BytesMut::new();
+        msg.put_slice(b"1. this is a test.");
+        Message::UserData(msg.freeze())
       },
-    )
+      notify: None,
+    })
     .await;
-    q.queue_broadcast(
-      MemberlistBroadcast::<SmolStr, SocketAddr, DummyWire<SmolStr, SocketAddr>> {
-        node: "foo".into(),
-        msg: {
-          let mut msg = BytesMut::new();
-          msg.put_slice(b"2. this is a test.");
-          Message::UserData(msg.freeze())
-        },
-        notify: None,
-        _marker: std::marker::PhantomData,
+    q.queue_broadcast(MemberlistBroadcast::<DummyWire<SmolStr, SocketAddr>> {
+      node: "foo".into(),
+      msg: {
+        let mut msg = BytesMut::new();
+        msg.put_slice(b"2. this is a test.");
+        Message::UserData(msg.freeze())
       },
-    )
+      notify: None,
+    })
     .await;
-    q.queue_broadcast(
-      MemberlistBroadcast::<SmolStr, SocketAddr, DummyWire<SmolStr, SocketAddr>> {
-        node: "bar".into(),
-        msg: {
-          let mut msg = BytesMut::new();
-          msg.put_slice(b"3. this is a test.");
-          Message::UserData(msg.freeze())
-        },
-        notify: None,
-        _marker: std::marker::PhantomData,
+    q.queue_broadcast(MemberlistBroadcast::<DummyWire<SmolStr, SocketAddr>> {
+      node: "bar".into(),
+      msg: {
+        let mut msg = BytesMut::new();
+        msg.put_slice(b"3. this is a test.");
+        Message::UserData(msg.freeze())
       },
-    )
+      notify: None,
+    })
     .await;
-    q.queue_broadcast(
-      MemberlistBroadcast::<SmolStr, SocketAddr, DummyWire<SmolStr, SocketAddr>> {
-        node: "baz".into(),
-        msg: {
-          let mut msg = BytesMut::new();
-          msg.put_slice(b"4. this is a test.");
-          Message::UserData(msg.freeze())
-        },
-        notify: None,
-        _marker: std::marker::PhantomData,
+    q.queue_broadcast(MemberlistBroadcast::<DummyWire<SmolStr, SocketAddr>> {
+      node: "baz".into(),
+      msg: {
+        let mut msg = BytesMut::new();
+        msg.put_slice(b"4. this is a test.");
+        Message::UserData(msg.freeze())
       },
-    )
+      notify: None,
+    })
     .await;
 
     // 2 byte overhead per message, should get all 4 messages
@@ -744,57 +687,45 @@ mod tests {
     );
 
     // 18 bytes per message
-    q.queue_broadcast(
-      MemberlistBroadcast::<SmolStr, SocketAddr, DummyWire<SmolStr, SocketAddr>> {
-        node: "test".into(),
-        msg: {
-          let mut msg = BytesMut::new();
-          msg.put_slice(b"1. this is a test.");
-          Message::UserData(msg.freeze())
-        },
-        notify: None,
-        _marker: std::marker::PhantomData,
+    q.queue_broadcast(MemberlistBroadcast::<DummyWire<SmolStr, SocketAddr>> {
+      node: "test".into(),
+      msg: {
+        let mut msg = BytesMut::new();
+        msg.put_slice(b"1. this is a test.");
+        Message::UserData(msg.freeze())
       },
-    )
+      notify: None,
+    })
     .await;
-    q.queue_broadcast(
-      MemberlistBroadcast::<SmolStr, SocketAddr, DummyWire<SmolStr, SocketAddr>> {
-        node: "foo".into(),
-        msg: {
-          let mut msg = BytesMut::new();
-          msg.put_slice(b"2. this is a test.");
-          Message::UserData(msg.freeze())
-        },
-        notify: None,
-        _marker: std::marker::PhantomData,
+    q.queue_broadcast(MemberlistBroadcast::<DummyWire<SmolStr, SocketAddr>> {
+      node: "foo".into(),
+      msg: {
+        let mut msg = BytesMut::new();
+        msg.put_slice(b"2. this is a test.");
+        Message::UserData(msg.freeze())
       },
-    )
+      notify: None,
+    })
     .await;
-    q.queue_broadcast(
-      MemberlistBroadcast::<SmolStr, SocketAddr, DummyWire<SmolStr, SocketAddr>> {
-        node: "bar".into(),
-        msg: {
-          let mut msg = BytesMut::new();
-          msg.put_slice(b"3. this is a test.");
-          Message::UserData(msg.freeze())
-        },
-        notify: None,
-        _marker: std::marker::PhantomData,
+    q.queue_broadcast(MemberlistBroadcast::<DummyWire<SmolStr, SocketAddr>> {
+      node: "bar".into(),
+      msg: {
+        let mut msg = BytesMut::new();
+        msg.put_slice(b"3. this is a test.");
+        Message::UserData(msg.freeze())
       },
-    )
+      notify: None,
+    })
     .await;
-    q.queue_broadcast(
-      MemberlistBroadcast::<SmolStr, SocketAddr, DummyWire<SmolStr, SocketAddr>> {
-        node: "baz".into(),
-        msg: {
-          let mut msg = BytesMut::new();
-          msg.put_slice(b"4. this is a test.");
-          Message::UserData(msg.freeze())
-        },
-        notify: None,
-        _marker: std::marker::PhantomData,
+    q.queue_broadcast(MemberlistBroadcast::<DummyWire<SmolStr, SocketAddr>> {
+      node: "baz".into(),
+      msg: {
+        let mut msg = BytesMut::new();
+        msg.put_slice(b"4. this is a test.");
+        Message::UserData(msg.freeze())
       },
-    )
+      notify: None,
+    })
     .await;
 
     assert_eq!(4, q.inner.lock().await.id_gen);
@@ -843,57 +774,45 @@ mod tests {
     let (tx2, rx2) = async_channel::bounded(1);
 
     // 18 bytes per message
-    q.queue_broadcast(
-      MemberlistBroadcast::<SmolStr, SocketAddr, DummyWire<SmolStr, SocketAddr>> {
-        node: "test".into(),
-        msg: {
-          let mut msg = BytesMut::new();
-          msg.put_slice(b"1. this is a test.");
-          Message::UserData(msg.freeze())
-        },
-        notify: Some(tx1),
-        _marker: std::marker::PhantomData,
+    q.queue_broadcast(MemberlistBroadcast::<DummyWire<SmolStr, SocketAddr>> {
+      node: "test".into(),
+      msg: {
+        let mut msg = BytesMut::new();
+        msg.put_slice(b"1. this is a test.");
+        Message::UserData(msg.freeze())
       },
-    )
+      notify: Some(tx1),
+    })
     .await;
-    q.queue_broadcast(
-      MemberlistBroadcast::<SmolStr, SocketAddr, DummyWire<SmolStr, SocketAddr>> {
-        node: "foo".into(),
-        msg: {
-          let mut msg = BytesMut::new();
-          msg.put_slice(b"2. this is a test.");
-          Message::UserData(msg.freeze())
-        },
-        notify: Some(tx2),
-        _marker: std::marker::PhantomData,
+    q.queue_broadcast(MemberlistBroadcast::<DummyWire<SmolStr, SocketAddr>> {
+      node: "foo".into(),
+      msg: {
+        let mut msg = BytesMut::new();
+        msg.put_slice(b"2. this is a test.");
+        Message::UserData(msg.freeze())
       },
-    )
+      notify: Some(tx2),
+    })
     .await;
-    q.queue_broadcast(
-      MemberlistBroadcast::<SmolStr, SocketAddr, DummyWire<SmolStr, SocketAddr>> {
-        node: "bar".into(),
-        msg: {
-          let mut msg = BytesMut::new();
-          msg.put_slice(b"3. this is a test.");
-          Message::UserData(msg.freeze())
-        },
-        notify: None,
-        _marker: std::marker::PhantomData,
+    q.queue_broadcast(MemberlistBroadcast::<DummyWire<SmolStr, SocketAddr>> {
+      node: "bar".into(),
+      msg: {
+        let mut msg = BytesMut::new();
+        msg.put_slice(b"3. this is a test.");
+        Message::UserData(msg.freeze())
       },
-    )
+      notify: None,
+    })
     .await;
-    q.queue_broadcast(
-      MemberlistBroadcast::<SmolStr, SocketAddr, DummyWire<SmolStr, SocketAddr>> {
-        node: "baz".into(),
-        msg: {
-          let mut msg = BytesMut::new();
-          msg.put_slice(b"4. this is a test.");
-          Message::UserData(msg.freeze())
-        },
-        notify: None,
-        _marker: std::marker::PhantomData,
+    q.queue_broadcast(MemberlistBroadcast::<DummyWire<SmolStr, SocketAddr>> {
+      node: "baz".into(),
+      msg: {
+        let mut msg = BytesMut::new();
+        msg.put_slice(b"4. this is a test.");
+        Message::UserData(msg.freeze())
       },
-    )
+      notify: None,
+    })
     .await;
 
     // keep only 2
@@ -922,11 +841,10 @@ mod tests {
     let q = TransmitLimitedQueue::new(1, 10);
     let insert = |name: &str, transmits: usize| {
       q.queue_broadcast_in(
-        MemberlistBroadcast::<SmolStr, SocketAddr, DummyWire<SmolStr, SocketAddr>> {
+        MemberlistBroadcast::<DummyWire<SmolStr, SocketAddr>> {
           node: name.into(),
           msg: Message::UserData(Bytes::new()),
           notify: None,
-          _marker: std::marker::PhantomData,
         },
         transmits,
       )

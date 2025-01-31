@@ -10,7 +10,11 @@ use super::*;
 // --------------------------------------------Crate Level Methods-------------------------------------------------
 impl<D, T> Memberlist<T, D>
 where
-  D: Delegate<Id = T::Id, Address = <T::Resolver as AddressResolver>::ResolvedAddress>,
+  D: Delegate<
+    Id = T::Id,
+    Address = <T::Resolver as AddressResolver>::ResolvedAddress,
+    Wire = T::Wire,
+  >,
   T: Transport,
 {
   /// A long running thread that pulls incoming streams from the
@@ -108,7 +112,9 @@ where
       )
       .await
       .map_err(Error::transport)?;
-    self.send_message(&mut conn, Message::UserData(msg)).await?;
+    let msg = Message::UserData(msg);
+
+    self.send_message(&mut conn, msg.try_into().map_err(Error::wire)?).await?;
     self
       .inner
       .transport
@@ -121,7 +127,11 @@ where
 // ----------------------------------------Module Level Methods------------------------------------
 impl<D, T> Memberlist<T, D>
 where
-  D: Delegate<Id = T::Id, Address = <T::Resolver as AddressResolver>::ResolvedAddress>,
+  D: Delegate<
+    Id = T::Id,
+    Address = <T::Resolver as AddressResolver>::ResolvedAddress,
+    Wire = T::Wire,
+  >,
   T: Transport,
 {
   pub(super) async fn send_local_state(
@@ -210,6 +220,8 @@ where
       });
     }
 
+    let msg = msg.try_into().map_err(Error::wire)?;
+
     #[cfg(feature = "metrics")]
     {
       use crate::transport::Wire;
@@ -227,7 +239,11 @@ where
 // -----------------------------------------Private Level Methods-----------------------------------
 impl<D, T> Memberlist<T, D>
 where
-  D: Delegate<Id = T::Id, Address = <T::Resolver as AddressResolver>::ResolvedAddress>,
+  D: Delegate<
+    Id = T::Id,
+    Address = <T::Resolver as AddressResolver>::ResolvedAddress,
+    Wire = T::Wire,
+  >,
   T: Transport,
 {
   /// Handles a single incoming stream connection from the transport.
@@ -267,9 +283,16 @@ where
         tracing::error!(err=%e, local = %self.inner.id, remote_node = %addr, "memberlist.stream: failed to receive");
 
         let err_resp = ErrorResponse::new(SmolStr::new(e.to_string()));
-        if let Err(e) = self.send_message(&mut conn, err_resp.into()).await {
-          tracing::error!(err=%e, local = %self.inner.id, remote_node = %addr, "memberlist.stream: failed to send error response");
-          return;
+        let err_msg: Message<_, _> = err_resp.into();
+        match err_msg.try_into() {
+          Ok(msg) => {
+            if let Err(e) = self.send_message(&mut conn, msg).await {
+              tracing::error!(err=%e, local = %self.inner.id, remote_node = %addr, "memberlist.stream: failed to send error response");
+            }
+          }
+          Err(e) => {
+            tracing::error!(err=%e, local = %self.inner.id, remote_node = %addr, "memberlist.stream: failed to construct err response transimission message");
+          }
         }
 
         return;
@@ -284,11 +307,20 @@ where
         }
 
         let ack = Ack::new(ping.sequence_number());
-        if let Err(e) = self.send_message(&mut conn, ack.into()).await {
-          tracing::error!(err=%e, remote_node = %addr, "memberlist.stream: failed to send ack response");
-        }
-        if let Err(e) = self.inner.transport.cache_stream(&addr, conn).await {
-          tracing::warn!(err=%e, remote_node = %addr, "memberlist.stream: failed to cache stream");
+        let ack_msg: Message<_, _> = ack.into();
+
+        match ack_msg.try_into() {
+          Ok(msg) => {
+            if let Err(e) = self.send_message(&mut conn, msg).await {
+              tracing::error!(err=%e, local = %self.inner.id, remote_node = %addr, "memberlist.stream: failed to send ack response");
+            }
+            if let Err(e) = self.inner.transport.cache_stream(&addr, conn).await {
+              tracing::warn!(err=%e, remote_node = %addr, "memberlist.stream: failed to cache stream");
+            }
+          }
+          Err(e) => {
+            tracing::error!(err=%e, local = %self.inner.id, remote_node = %addr, "memberlist.stream: failed to construct ack response transimission message");
+          }
         }
       }
       Message::PushPull(pp) => {

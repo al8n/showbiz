@@ -1,13 +1,13 @@
 use crate::{
   base::Memberlist,
-  delegate::Delegate,
+  delegate::{Delegate, DelegateError},
   error::Error,
   transport::{Transport, Wire},
   types::{Message, TinyVec},
 };
 use async_channel::Sender;
 
-use nodecraft::{resolver::AddressResolver, CheapClone};
+use nodecraft::resolver::AddressResolver;
 
 /// Something that can be broadcasted via gossip to
 /// the memberlist cluster.
@@ -48,15 +48,18 @@ pub trait Broadcast: core::fmt::Debug + Send + Sync + 'static {
 }
 
 #[viewit::viewit]
-pub(crate) struct MemberlistBroadcast<I, A, W> {
-  node: I,
-  msg: Message<I, A>,
+pub(crate) struct MemberlistBroadcast<W: Wire> {
+  node: W::Id,
+  msg: W::Message,
   notify: Option<async_channel::Sender<()>>,
-  _marker: std::marker::PhantomData<W>,
 }
 
-impl<I: core::fmt::Debug, A: core::fmt::Debug, W> core::fmt::Debug
-  for MemberlistBroadcast<I, A, W>
+impl<W> core::fmt::Debug for MemberlistBroadcast<W>
+where
+  W: Wire,
+  W::Id: core::fmt::Debug,
+  W::Address: core::fmt::Debug,
+  W::Message: core::fmt::Debug,
 {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     f.debug_struct(std::any::type_name::<Self>())
@@ -66,28 +69,15 @@ impl<I: core::fmt::Debug, A: core::fmt::Debug, W> core::fmt::Debug
   }
 }
 
-impl<I, A, W> Broadcast for MemberlistBroadcast<I, A, W>
+impl<W> Broadcast for MemberlistBroadcast<W>
 where
-  I: CheapClone
-    + Eq
-    + core::hash::Hash
-    + core::fmt::Debug
-    + core::fmt::Display
-    + Send
-    + Sync
-    + 'static,
-  A: CheapClone
-    + Eq
-    + core::hash::Hash
-    + core::fmt::Display
-    + core::fmt::Debug
-    + Send
-    + Sync
-    + 'static,
-  W: Wire<Id = I, Address = A>,
+  W: Wire,
+  W::Id: core::fmt::Debug + core::fmt::Display + core::hash::Hash + Clone + PartialEq + Eq,
+  W::Address: core::fmt::Debug,
+  W::Message: core::fmt::Debug + Clone,
 {
-  type Id = I;
-  type Message = Message<I, A>;
+  type Id = W::Id;
+  type Message = W::Message;
 
   fn id(&self) -> Option<&Self::Id> {
     Some(&self.node)
@@ -120,25 +110,25 @@ where
 
 impl<D, T> Memberlist<T, D>
 where
-  D: Delegate<Id = T::Id, Address = <T::Resolver as AddressResolver>::ResolvedAddress>,
+  D: Delegate<
+    Id = T::Id,
+    Address = <T::Resolver as AddressResolver>::ResolvedAddress,
+    Wire = T::Wire,
+  >,
   T: Transport,
 {
   #[inline]
   pub(crate) async fn broadcast_notify(
     &self,
     node: T::Id,
-    msg: Message<T::Id, <T::Resolver as AddressResolver>::ResolvedAddress>,
+    msg: <T::Wire as Wire>::Message,
     notify_tx: Option<Sender<()>>,
   ) {
     let _ = self.queue_broadcast(node, msg, notify_tx).await;
   }
 
   #[inline]
-  pub(crate) async fn broadcast(
-    &self,
-    node: T::Id,
-    msg: Message<T::Id, <T::Resolver as AddressResolver>::ResolvedAddress>,
-  ) {
+  pub(crate) async fn broadcast(&self, node: T::Id, msg: <T::Wire as Wire>::Message) {
     let _ = self.queue_broadcast(node, msg, None).await;
   }
 
@@ -146,7 +136,7 @@ where
   async fn queue_broadcast(
     &self,
     node: T::Id,
-    msg: Message<T::Id, <T::Resolver as AddressResolver>::ResolvedAddress>,
+    msg: <T::Wire as Wire>::Message,
     notify_tx: Option<Sender<()>>,
   ) {
     self
@@ -156,7 +146,6 @@ where
         node,
         msg,
         notify: notify_tx,
-        _marker: std::marker::PhantomData,
       })
       .await
   }
@@ -167,11 +156,10 @@ where
   #[inline]
   pub(crate) async fn get_broadcast_with_prepend(
     &self,
-    to_send: TinyVec<Message<T::Id, <T::Resolver as AddressResolver>::ResolvedAddress>>,
+    to_send: TinyVec<<T::Wire as Wire>::Message>,
     overhead: usize,
     limit: usize,
-  ) -> Result<TinyVec<Message<T::Id, <T::Resolver as AddressResolver>::ResolvedAddress>>, Error<T, D>>
-  {
+  ) -> Result<TinyVec<<T::Wire as Wire>::Message>, Error<T, D>> {
     // Get memberlist messages first
     let mut to_send = self
       .inner
@@ -190,18 +178,20 @@ where
       // Check space remaining for user messages
       let avail = limit.saturating_sub(bytes_used);
       if avail > overhead {
-        to_send.extend(
-          delegate
-            .broadcast_messages(overhead, avail, |b| {
-              let msg =
-                Message::<T::Id, <T::Resolver as AddressResolver>::ResolvedAddress>::UserData(b);
-              let len = <T::Wire as Wire>::encoded_len(&msg);
-              (len, msg.unwrap_user_data())
-            })
-            .await
-            .into_iter()
-            .map(Message::UserData),
-        );
+        delegate
+          .broadcast_messages(overhead, avail, |b| {
+            let msg = <<T::Wire as Wire>::Message as TryFrom<_>>::try_from(Message::<
+              T::Id,
+              <T::Resolver as AddressResolver>::ResolvedAddress,
+            >::UserData(
+              b.clone()
+            ))?;
+            let len = <T::Wire as Wire>::encoded_len(&msg);
+            to_send.push(msg);
+            Ok(len)
+          })
+          .await
+          .map_err(|e| Error::Delegate(DelegateError::NodeDelegate(e)))?;
       }
     }
 

@@ -4,7 +4,10 @@ use bytes::Bytes;
 use memberlist_types::{Meta, TinyVec};
 use nodecraft::{CheapClone, Id};
 
-use crate::types::{NodeState, SmallVec};
+use crate::{
+  transport::Wire,
+  types::{NodeState, SmallVec},
+};
 
 #[cfg(any(test, feature = "test"))]
 #[doc(hidden)]
@@ -37,6 +40,8 @@ pub enum DelegateError<D: Delegate> {
   AliveDelegate(<D as AliveDelegate>::Error),
   /// [`MergeDelegate`] error
   MergeDelegate(<D as MergeDelegate>::Error),
+  /// [`NodeDelegate`] error
+  NodeDelegate(<<D as NodeDelegate>::Wire as Wire>::Error),
 }
 
 impl<D: Delegate> core::fmt::Debug for DelegateError<D> {
@@ -44,6 +49,7 @@ impl<D: Delegate> core::fmt::Debug for DelegateError<D> {
     match self {
       Self::AliveDelegate(err) => write!(f, "{err:?}"),
       Self::MergeDelegate(err) => write!(f, "{err:?}"),
+      Self::NodeDelegate(err) => write!(f, "{err:?}"),
     }
   }
 }
@@ -53,6 +59,7 @@ impl<D: Delegate> core::fmt::Display for DelegateError<D> {
     match self {
       Self::AliveDelegate(err) => write!(f, "{err}"),
       Self::MergeDelegate(err) => write!(f, "{err}"),
+      Self::NodeDelegate(err) => write!(f, "{err}"),
     }
   }
 }
@@ -105,15 +112,15 @@ impl std::error::Error for VoidDelegateError {}
 
 /// Void delegate
 #[derive(Debug, Copy, Clone)]
-pub struct VoidDelegate<I, A>(core::marker::PhantomData<(I, A)>);
+pub struct VoidDelegate<I, A, W>(core::marker::PhantomData<(I, A, W)>);
 
-impl<I, A> Default for VoidDelegate<I, A> {
+impl<I, A, W> Default for VoidDelegate<I, A, W> {
   fn default() -> Self {
     Self::new()
   }
 }
 
-impl<I, A> VoidDelegate<I, A> {
+impl<I, A, W> VoidDelegate<I, A, W> {
   /// Creates a new [`VoidDelegate`].
   #[inline]
   pub const fn new() -> Self {
@@ -121,10 +128,11 @@ impl<I, A> VoidDelegate<I, A> {
   }
 }
 
-impl<I, A> AliveDelegate for VoidDelegate<I, A>
+impl<I, A, W> AliveDelegate for VoidDelegate<I, A, W>
 where
   I: Id + Send + Sync + 'static,
   A: CheapClone + Send + Sync + 'static,
+  W: Send + Sync + 'static,
 {
   type Error = VoidDelegateError;
   type Id = I;
@@ -138,10 +146,11 @@ where
   }
 }
 
-impl<I, A> MergeDelegate for VoidDelegate<I, A>
+impl<I, A, W> MergeDelegate for VoidDelegate<I, A, W>
 where
   I: Id + Send + Sync + 'static,
   A: CheapClone + Send + Sync + 'static,
+  W: Send + Sync + 'static,
 {
   type Error = VoidDelegateError;
   type Id = I;
@@ -155,10 +164,11 @@ where
   }
 }
 
-impl<I, A> ConflictDelegate for VoidDelegate<I, A>
+impl<I, A, W> ConflictDelegate for VoidDelegate<I, A, W>
 where
   I: Id + Send + Sync + 'static,
   A: CheapClone + Send + Sync + 'static,
+  W: Send + Sync + 'static,
 {
   type Id = I;
   type Address = A;
@@ -171,10 +181,11 @@ where
   }
 }
 
-impl<I, A> PingDelegate for VoidDelegate<I, A>
+impl<I, A, W> PingDelegate for VoidDelegate<I, A, W>
 where
   I: Id + Send + Sync + 'static,
   A: CheapClone + Send + Sync + 'static,
+  W: Send + Sync + 'static,
 {
   type Id = I;
   type Address = A;
@@ -196,10 +207,11 @@ where
   }
 }
 
-impl<I, A> EventDelegate for VoidDelegate<I, A>
+impl<I, A, W> EventDelegate for VoidDelegate<I, A, W>
 where
   I: Id + Send + Sync + 'static,
   A: CheapClone + Send + Sync + 'static,
+  W: Send + Sync + 'static,
 {
   type Id = I;
   type Address = A;
@@ -211,11 +223,14 @@ where
   async fn notify_update(&self, _node: Arc<NodeState<Self::Id, Self::Address>>) {}
 }
 
-impl<I, A> NodeDelegate for VoidDelegate<I, A>
+impl<I, A, W> NodeDelegate for VoidDelegate<I, A, W>
 where
   I: Id + Send + Sync + 'static,
   A: CheapClone + Send + Sync + 'static,
+  W: Wire,
 {
+  type Wire = W;
+
   async fn node_meta(&self, _limit: usize) -> Meta {
     Meta::empty()
   }
@@ -227,11 +242,11 @@ where
     _overhead: usize,
     _limit: usize,
     _encoded_len: F,
-  ) -> TinyVec<Bytes>
+  ) -> Result<(), <Self::Wire as Wire>::Error>
   where
-    F: Fn(Bytes) -> (usize, Bytes) + Send,
+    F: FnMut(Bytes) -> Result<usize, <Self::Wire as Wire>::Error> + Send,
   {
-    TinyVec::new()
+    Ok(())
   }
 
   async fn local_state(&self, _join: bool) -> Bytes {
@@ -241,10 +256,11 @@ where
   async fn merge_remote_state(&self, _buf: Bytes, _join: bool) {}
 }
 
-impl<I, A> Delegate for VoidDelegate<I, A>
+impl<I, A, W> Delegate for VoidDelegate<I, A, W>
 where
   I: Id + Send + Sync + 'static,
   A: CheapClone + Send + Sync + 'static,
+  W: Wire,
 {
   type Id = I;
   type Address = A;

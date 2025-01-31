@@ -1,5 +1,3 @@
-use nodecraft::Transformable;
-
 pub use is_global_ip::IsGlobalIp;
 
 use crate::types::{Message, SmallVec, TinyVec};
@@ -133,19 +131,17 @@ pub enum BatchHint {
 }
 
 /// Calculate batch hints for a slice of messages.
-fn batch_hints<I, A, W>(
+fn batch_hints<W>(
   fixed_payload_overhead: usize,
   batch_overhead: usize,
   msg_overhead: usize,
   max_encoded_batch_size: usize,
   max_encoded_message_size: usize,
   max_messages_per_batch: usize,
-  msgs: &[Message<I, A>],
+  msgs: &[W::Message],
 ) -> SmallVec<BatchHint>
 where
-  I: Transformable,
-  A: Transformable,
-  W: crate::transport::Wire<Id = I, Address = A>,
+  W: crate::transport::Wire,
 {
   let mut infos = SmallVec::new();
   let mut current_encoded_size = fixed_payload_overhead + batch_overhead;
@@ -257,22 +253,19 @@ where
 }
 
 /// Batch a collection of messages.
-pub fn batch<I, A, M, W>(
+pub fn batch<W>(
   fixed_payload_overhead: usize,
   batch_overhead: usize,
   msg_overhead: usize,
   max_encoded_batch_size: usize,
   max_encoded_message_size: usize,
   max_messages_per_batch: usize,
-  msgs: M,
-) -> SmallVec<Batch<I, A>>
+  msgs: impl AsRef<[W::Message]> + IntoIterator<Item = W::Message>,
+) -> Result<SmallVec<Batch<W::Id, W::Address>>, W::Error>
 where
-  I: Transformable,
-  A: Transformable,
-  M: AsRef<[Message<I, A>]> + IntoIterator<Item = Message<I, A>>,
-  W: crate::transport::Wire<Id = I, Address = A>,
+  W: crate::transport::Wire,
 {
-  let hints = batch_hints::<_, _, W>(
+  let hints = batch_hints::<W>(
     fixed_payload_overhead,
     batch_overhead,
     msg_overhead,
@@ -287,7 +280,7 @@ where
     match hint {
       BatchHint::One { encoded_size, .. } => {
         batches.push(Batch::One {
-          msg: msgs.next().unwrap(),
+          msg: msgs.next().unwrap().try_into()?,
           estimate_encoded_size: encoded_size,
         });
       }
@@ -297,7 +290,7 @@ where
       } => {
         let mut batch = TinyVec::with_capacity(range.end - range.start);
         for _ in range {
-          batch.push(msgs.next().unwrap());
+          batch.push(msgs.next().unwrap().try_into()?);
         }
         batches.push(Batch::More {
           estimate_encoded_size: encoded_size,
@@ -306,7 +299,7 @@ where
       }
     }
   }
-  batches
+  Ok(batches)
 }
 
 /// The code in this mod is copied from [libp2p]
@@ -601,9 +594,11 @@ fn test_batch() {
   use smol_str::SmolStr;
   use std::net::SocketAddr;
 
-  let single = Message::<SmolStr, SocketAddr>::UserData("ping".into());
+  let single = Message::<SmolStr, SocketAddr>::UserData("ping".into())
+    .try_into()
+    .unwrap();
   let encoded_len = Lpe::<_, _>::encoded_len(&single);
-  let batches = batch::<_, _, _, Lpe<_, _>>(
+  let batches = batch::<Lpe<_, _>>(
     0,
     2,
     2,
@@ -611,7 +606,8 @@ fn test_batch() {
     u16::MAX as usize,
     255,
     SmallVec::from(single),
-  );
+  )
+  .unwrap();
   assert_eq!(batches.len(), 1, "bad len {}", batches.len());
   assert_eq!(
     batches[0].estimate_encoded_size(),
@@ -622,14 +618,16 @@ fn test_batch() {
   let mut total_encoded_len = 0;
   let bcasts = (0..256)
     .map(|i| {
-      let msg = Message::UserData(i.to_string().as_bytes().to_vec().into());
+      let msg = Message::<SmolStr, SocketAddr>::UserData(i.to_string().as_bytes().to_vec().into())
+        .try_into()
+        .unwrap();
       let encoded_len = Lpe::<_, _>::encoded_len(&msg);
       total_encoded_len += 2 + encoded_len;
       msg
     })
-    .collect::<SmallVec<Message<SmolStr, SocketAddr>>>();
+    .collect::<SmallVec<_>>();
 
-  let batches = batch::<_, _, _, Lpe<_, _>>(0, 2, 2, 1400, u16::MAX as usize, 255, bcasts);
+  let batches = batch::<Lpe<_, _>>(0, 2, 2, 1400, u16::MAX as usize, 255, bcasts).unwrap();
   assert_eq!(batches.len(), 2, "bad len {}", batches.len());
   assert_eq!(batches[0].len() + batches[1].len(), 256, "missing packets");
   assert_eq!(
@@ -649,7 +647,9 @@ fn test_batch_large_max_encoded_batch_size() {
   let mut last_one_encoded_len = 0;
   let bcasts = (0..256)
     .map(|i| {
-      let msg = Message::UserData(i.to_string().as_bytes().to_vec().into());
+      let msg = Message::<SmolStr, SocketAddr>::UserData(i.to_string().as_bytes().to_vec().into())
+        .try_into()
+        .unwrap();
       let encoded_len = Lpe::<_, _>::encoded_len(&msg);
       if i == 255 {
         last_one_encoded_len = encoded_len;
@@ -658,10 +658,10 @@ fn test_batch_large_max_encoded_batch_size() {
       }
       msg
     })
-    .collect::<SmallVec<Message<SmolStr, SocketAddr>>>();
+    .collect::<SmallVec<_>>();
 
   let batches =
-    batch::<_, _, _, Lpe<_, _>>(0, 6, 4, u32::MAX as usize, u32::MAX as usize, 255, bcasts);
+    batch::<Lpe<_, _>>(0, 6, 4, u32::MAX as usize, u32::MAX as usize, 255, bcasts).unwrap();
   assert_eq!(batches.len(), 2, "bad len {}", batches.len());
   assert_eq!(batches[0].len() + batches[1].len(), 256, "missing packets");
   assert_eq!(

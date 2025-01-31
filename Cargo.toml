@@ -5,6 +5,7 @@ members = [
   "types",
   "transports/net",
   "transports/quic",
+  "proto",
   # "bindings/js",
   # "bindings/nodejs",
   # "bindings/py",

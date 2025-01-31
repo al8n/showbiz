@@ -5,7 +5,7 @@ use smol_str::SmolStr;
 
 use crate::{
   delegate::{Delegate, DelegateError},
-  transport::{MaybeResolvedAddress, Transport},
+  transport::{MaybeResolvedAddress, Transport, Wire},
   types::{ErrorResponse, SmallVec},
 };
 
@@ -17,7 +17,11 @@ pub use crate::{
 /// Error returned by `Memberlist::join_many`.
 pub struct JoinError<T: Transport, D>
 where
-  D: Delegate<Id = T::Id, Address = <T::Resolver as AddressResolver>::ResolvedAddress>,
+  D: Delegate<
+    Id = T::Id,
+    Address = <T::Resolver as AddressResolver>::ResolvedAddress,
+    Wire = T::Wire,
+  >,
 {
   pub(crate) joined: SmallVec<Node<T::Id, <T::Resolver as AddressResolver>::ResolvedAddress>>,
   pub(crate) errors: HashMap<Node<T::Id, MaybeResolvedAddress<T>>, Error<T, D>>,
@@ -29,7 +33,11 @@ impl<D, T: Transport> From<JoinError<T, D>>
     HashMap<Node<T::Id, MaybeResolvedAddress<T>>, Error<T, D>>,
   )
 where
-  D: Delegate<Id = T::Id, Address = <T::Resolver as AddressResolver>::ResolvedAddress>,
+  D: Delegate<
+    Id = T::Id,
+    Address = <T::Resolver as AddressResolver>::ResolvedAddress,
+    Wire = T::Wire,
+  >,
 {
   fn from(e: JoinError<T, D>) -> Self {
     (e.joined, e.errors)
@@ -38,7 +46,11 @@ where
 
 impl<D, T: Transport> core::fmt::Debug for JoinError<T, D>
 where
-  D: Delegate<Id = T::Id, Address = <T::Resolver as AddressResolver>::ResolvedAddress>,
+  D: Delegate<
+    Id = T::Id,
+    Address = <T::Resolver as AddressResolver>::ResolvedAddress,
+    Wire = T::Wire,
+  >,
 {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     if !self.joined.is_empty() {
@@ -58,7 +70,11 @@ where
 
 impl<D, T: Transport> core::fmt::Display for JoinError<T, D>
 where
-  D: Delegate<Id = T::Id, Address = <T::Resolver as AddressResolver>::ResolvedAddress>,
+  D: Delegate<
+    Id = T::Id,
+    Address = <T::Resolver as AddressResolver>::ResolvedAddress,
+    Wire = T::Wire,
+  >,
 {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     if !self.joined.is_empty() {
@@ -77,13 +93,21 @@ where
 }
 
 impl<T: Transport, D> std::error::Error for JoinError<T, D> where
-  D: Delegate<Id = T::Id, Address = <T::Resolver as AddressResolver>::ResolvedAddress>
+  D: Delegate<
+    Id = T::Id,
+    Address = <T::Resolver as AddressResolver>::ResolvedAddress,
+    Wire = T::Wire,
+  >
 {
 }
 
 impl<T: Transport, D> JoinError<T, D>
 where
-  D: Delegate<Id = T::Id, Address = <T::Resolver as AddressResolver>::ResolvedAddress>,
+  D: Delegate<
+    Id = T::Id,
+    Address = <T::Resolver as AddressResolver>::ResolvedAddress,
+    Wire = T::Wire,
+  >,
 {
   /// Return the number of successful joined nodes
   pub fn num_joined(&self) -> usize {
@@ -100,7 +124,11 @@ where
 
 impl<T: Transport, D> JoinError<T, D>
 where
-  D: Delegate<Id = T::Id, Address = <T::Resolver as AddressResolver>::ResolvedAddress>,
+  D: Delegate<
+    Id = T::Id,
+    Address = <T::Resolver as AddressResolver>::ResolvedAddress,
+    Wire = T::Wire,
+  >,
 {
   /// Return the errors
   pub const fn errors(&self) -> &HashMap<Node<T::Id, MaybeResolvedAddress<T>>, Error<T, D>> {
@@ -203,5 +231,10 @@ impl<T: Transport, D: Delegate> Error<T, D> {
       Self::Transport(e) => e.is_remote_failure(),
       _ => false,
     }
+  }
+
+  #[inline]
+  pub(crate) fn wire(e: <T::Wire as Wire>::Error) -> Self {
+    Self::Transport(e.into())
   }
 }

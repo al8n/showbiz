@@ -33,7 +33,11 @@ fn remaining_suspicion_time(
 pub(crate) struct Suspicioner<T, D>
 where
   T: Transport,
-  D: Delegate<Id = T::Id, Address = <T::Resolver as AddressResolver>::ResolvedAddress>,
+  D: Delegate<
+    Id = T::Id,
+    Address = <T::Resolver as AddressResolver>::ResolvedAddress,
+    Wire = T::Wire,
+  >,
 {
   memberlist: Memberlist<T, D>,
   node: T::Id,
@@ -46,7 +50,11 @@ where
 impl<T, D> Suspicioner<T, D>
 where
   T: Transport,
-  D: Delegate<Id = T::Id, Address = <T::Resolver as AddressResolver>::ResolvedAddress>,
+  D: Delegate<
+    Id = T::Id,
+    Address = <T::Resolver as AddressResolver>::ResolvedAddress,
+    Wire = T::Wire,
+  >,
 {
   pub(crate) fn new(
     memberlist: Memberlist<T, D>,
@@ -122,7 +130,11 @@ where
 pub(crate) struct Suspicion<T, D>
 where
   T: Transport,
-  D: Delegate<Id = T::Id, Address = <T::Resolver as AddressResolver>::ResolvedAddress>,
+  D: Delegate<
+    Id = T::Id,
+    Address = <T::Resolver as AddressResolver>::ResolvedAddress,
+    Wire = T::Wire,
+  >,
 {
   n: Arc<AtomicU32>,
   k: u32,
@@ -137,7 +149,11 @@ where
 impl<T, D> Suspicion<T, D>
 where
   T: Transport,
-  D: Delegate<Id = T::Id, Address = <T::Resolver as AddressResolver>::ResolvedAddress>,
+  D: Delegate<
+    Id = T::Id,
+    Address = <T::Resolver as AddressResolver>::ResolvedAddress,
+    Wire = T::Wire,
+  >,
 {
   /// Returns a after_func started with the max time, and that will drive
   /// to the min time after seeing k or more confirmations. The from node will be
@@ -178,7 +194,11 @@ where
 impl<T, D> Suspicion<T, D>
 where
   T: Transport,
-  D: Delegate<Id = T::Id, Address = <T::Resolver as AddressResolver>::ResolvedAddress>,
+  D: Delegate<
+    Id = T::Id,
+    Address = <T::Resolver as AddressResolver>::ResolvedAddress,
+    Wire = T::Wire,
+  >,
 {
   /// Confirm registers that a possibly new peer has also determined the given
   /// node is suspect. This returns true if this was new information, and false
@@ -233,7 +253,11 @@ where
 impl<T, D> Drop for Suspicion<T, D>
 where
   T: Transport,
-  D: Delegate<Id = T::Id, Address = <T::Resolver as AddressResolver>::ResolvedAddress>,
+  D: Delegate<
+    Id = T::Id,
+    Address = <T::Resolver as AddressResolver>::ResolvedAddress,
+    Wire = T::Wire,
+  >,
 {
   fn drop(&mut self) {
     if let Some(h) = self.handle.take() {

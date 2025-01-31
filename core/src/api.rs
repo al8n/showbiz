@@ -21,7 +21,11 @@ use super::{
 
 impl<T, D> Memberlist<T, D>
 where
-  D: Delegate<Id = T::Id, Address = <T::Resolver as AddressResolver>::ResolvedAddress>,
+  D: Delegate<
+    Id = T::Id,
+    Address = <T::Resolver as AddressResolver>::ResolvedAddress,
+    Wire = T::Wire,
+  >,
   T: Transport,
 {
   /// Returns the local node ID.
@@ -205,15 +209,21 @@ where
   pub async fn new(
     transport_options: T::Options,
     opts: Options,
-  ) -> Result<Self, Error<T, VoidDelegate<T::Id, <T::Resolver as AddressResolver>::ResolvedAddress>>>
-  {
+  ) -> Result<
+    Self,
+    Error<T, VoidDelegate<T::Id, <T::Resolver as AddressResolver>::ResolvedAddress, T::Wire>>,
+  > {
     Self::create(None, transport_options, opts).await
   }
 }
 
 impl<T, D> Memberlist<T, D>
 where
-  D: Delegate<Id = T::Id, Address = <T::Resolver as AddressResolver>::ResolvedAddress>,
+  D: Delegate<
+    Id = T::Id,
+    Address = <T::Resolver as AddressResolver>::ResolvedAddress,
+    Wire = T::Wire,
+  >,
   T: Transport,
 {
   /// Create a new memberlist with the given transport, delegate and options.
@@ -502,7 +512,7 @@ where
     if self.has_left() || self.has_shutdown() {
       return Err(Error::NotRunning);
     }
-    self.transport_send_packet(to, Message::UserData(msg)).await
+    self.transport_send_packet(to, Message::UserData(msg).try_into().map_err(Error::wire)?).await
   }
 
   /// Uses the reliable stream-oriented interface of the transport to

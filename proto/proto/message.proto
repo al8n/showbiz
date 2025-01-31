@@ -1,0 +1,110 @@
+syntax = "proto3";
+
+package types;
+
+// Main message type that wraps all possible message variants
+message Message {
+  oneof payload {
+    Ping ping = 1;
+    IndirectPing indirect_ping = 2;
+    Ack ack = 3;
+    Suspect suspect = 4;
+    Alive alive = 5;
+    Dead dead = 6;
+    PushPull push_pull = 7;
+    bytes user_data = 8;
+    Nack nack = 9;
+    ErrorResponse error_response = 10;
+  }
+}
+
+// Node represents a member in the cluster
+message Node {
+  bytes id = 1;
+  bytes address = 2;
+}
+
+// PushNodeState represents the state of a node that is pushed to remote servers
+message PushNodeState {
+  bytes id = 1;
+  bytes address = 2;
+  Meta meta = 3;
+  uint32 incarnation = 4;
+  State state = 5;
+  uint32 protocol_version = 6;
+  uint32 delegate_version = 7;
+}
+
+// Meta contains delegate metadata
+message Meta {
+  bytes data = 1;
+}
+
+// Ack response for a ping
+message Ack {
+  uint32 sequence_number = 1;
+  bytes payload = 2;
+}
+
+// Nack response for failed indirect pings
+message Nack {
+  uint32 sequence_number = 1;
+}
+
+// Error response from remote peer
+message ErrorResponse {
+  string message = 1;
+}
+
+// Alive message indicating a node is alive
+message Alive {
+  uint32 incarnation = 1;
+  Meta meta = 2;
+  Node node = 3;
+  uint32 protocol_version = 4;
+  uint32 delegate_version = 5;
+}
+
+// Dead message indicating a node is considered dead
+message Dead {
+  uint32 incarnation = 1;
+  bytes node_id = 2;
+  bytes from_id = 3;
+}
+
+// Suspect message indicating a node is suspected to be down
+message Suspect {
+  uint32 incarnation = 1;
+  bytes node_id = 2;
+  bytes from_id = 3;
+}
+
+// PushPull message for state synchronization
+message PushPull {
+  bool join = 1;
+  repeated PushNodeState states = 2;
+  bytes user_data = 3;
+}
+
+// Ping message to check node liveness
+message Ping {
+  uint32 sequence_number = 1;
+  Node node = 2;
+}
+
+// IndirectPing message for checking node liveness through an intermediary
+message IndirectPing {
+  uint32 sequence_number = 1;
+  Node source_node = 2;
+  Node target_node = 3;
+  Node relay_node = 4;
+}
+
+// Node state enumeration
+enum State {
+  UNSPECIFIED = 0;
+  ALIVE = 1;
+  SUSPECT = 2;
+  DEAD = 3;
+}
+

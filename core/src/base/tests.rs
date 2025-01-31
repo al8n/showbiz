@@ -17,7 +17,11 @@ use super::*;
 
 impl<T, D> Members<T, D>
 where
-  D: Delegate<Id = T::Id, Address = <T::Resolver as AddressResolver>::ResolvedAddress>,
+  D: Delegate<
+    Id = T::Id,
+    Address = <T::Resolver as AddressResolver>::ResolvedAddress,
+    Wire = T::Wire,
+  >,
   T: Transport,
 {
   pub(crate) fn get_state<Q>(
@@ -48,7 +52,11 @@ where
 
 impl<D, T> Memberlist<T, D>
 where
-  D: Delegate<Id = T::Id, Address = <T::Resolver as AddressResolver>::ResolvedAddress>,
+  D: Delegate<
+    Id = T::Id,
+    Address = <T::Resolver as AddressResolver>::ResolvedAddress,
+    Wire = T::Wire,
+  >,
   T: Transport,
 {
   #[cfg(any(test, feature = "test"))]
@@ -1124,7 +1132,11 @@ pub async fn memberlist_ping_delegate<T, R>(
 pub async fn wait_until_size<T, D, R>(m: &Memberlist<T, D>, expected: usize)
 where
   T: Transport<Runtime = R>,
-  D: Delegate<Id = T::Id, Address = <T::Resolver as AddressResolver>::ResolvedAddress>,
+  D: Delegate<
+    Id = T::Id,
+    Address = <T::Resolver as AddressResolver>::ResolvedAddress,
+    Wire = T::Wire,
+  >,
   R: RuntimeLite,
 {
   retry::<R, _, _>(30, Duration::from_millis(500), || async {

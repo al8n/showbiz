@@ -198,7 +198,11 @@ pub mod tests {
     opts: Options,
   ) -> Result<Memberlist<T, D>, Error<T, D>>
   where
-    D: Delegate<Id = T::Id, Address = <T::Resolver as AddressResolver>::ResolvedAddress>,
+    D: Delegate<
+      Id = T::Id,
+      Address = <T::Resolver as AddressResolver>::ResolvedAddress,
+      Wire = T::Wire,
+    >,
     T: Transport,
   {
     crate::Memberlist::new_in(t, Some(d), opts)
